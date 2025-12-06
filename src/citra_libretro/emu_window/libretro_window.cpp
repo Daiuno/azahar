@@ -9,6 +9,7 @@
 
 #include "audio_core/audio_types.h"
 #include "citra_libretro/citra_libretro.h"
+#include "citra_libretro/core_settings.h"
 #include "citra_libretro/environment.h"
 #include "citra_libretro/input/input_factory.h"
 #include "common/settings.h"
@@ -180,7 +181,6 @@ void EmuWindow_LibRetro::DoneCurrent() {
 void EmuWindow_LibRetro::OnMinimalClientAreaChangeRequest(std::pair<u32, u32> _minimal_size) {}
 
 void EmuWindow_LibRetro::UpdateLayout() {
-    // TODO: Handle custom layouts
     // TODO: Extract this ugly thing somewhere else
     unsigned baseX;
     unsigned baseY;
@@ -192,6 +192,26 @@ void EmuWindow_LibRetro::UpdateLayout() {
     enableEmulatedPointer = true;
 
     switch (Settings::values.layout_option.GetValue()) {
+    case Settings::LayoutOption::CustomLayout:
+        // Use explicit buffer dimensions if provided, otherwise calculate from screen positions
+        if (LibRetro::settings.custom_layout_buffer_width > 0 &&
+            LibRetro::settings.custom_layout_buffer_height > 0) {
+            // Use explicit buffer dimensions from 10-parameter format
+            baseX = LibRetro::settings.custom_layout_buffer_width;
+            baseY = LibRetro::settings.custom_layout_buffer_height;
+        } else {
+            // Calculate the required buffer size from custom layout configuration (8-parameter format)
+            baseX = std::max(Settings::values.custom_top_x.GetValue() +
+                            Settings::values.custom_top_width.GetValue(),
+                            Settings::values.custom_bottom_x.GetValue() +
+                            Settings::values.custom_bottom_width.GetValue());
+            baseY = std::max(Settings::values.custom_top_y.GetValue() +
+                            Settings::values.custom_top_height.GetValue(),
+                            Settings::values.custom_bottom_y.GetValue() +
+                            Settings::values.custom_bottom_height.GetValue());
+        }
+        // Custom layout values are already scaled, no additional scaling needed
+        break;
     case Settings::LayoutOption::SingleScreen:
         if (swapped) { // Bottom screen visible
             baseX = Core::kScreenBottomWidth;

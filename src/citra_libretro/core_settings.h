@@ -33,6 +33,10 @@ struct CoreSettings {
 
     float motion_sensitivity;
 
+    // Custom layout buffer dimensions (0 means auto-calculate)
+    unsigned custom_layout_buffer_width = 0;
+    unsigned custom_layout_buffer_height = 0;
+
 } extern settings;
 
 void RegisterCoreOptions(void);

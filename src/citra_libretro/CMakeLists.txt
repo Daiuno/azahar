@@ -8,6 +8,8 @@ add_library(azahar_libretro SHARED
         input/input_factory.h
         input/mouse_tracker.cpp
         input/mouse_tracker.h
+        camera/libretro_camera_factory.cpp
+        camera/libretro_camera_factory.h
         citra_libretro.cpp
         citra_libretro.h
         $<$<BOOL:${ENABLE_VULKAN}>: libretro_vk.cpp libretro_vk.h>

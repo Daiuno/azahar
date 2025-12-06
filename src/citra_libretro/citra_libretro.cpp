@@ -28,6 +28,7 @@
 #include "video_core/video_core.h"
 
 #include "citra_libretro/citra_libretro.h"
+#include "citra_libretro/camera/libretro_camera_factory.h"
 #include "citra_libretro/core_settings.h"
 #include "citra_libretro/environment.h"
 #include "citra_libretro/input/input_factory.h"
@@ -77,6 +78,9 @@ void retro_init() {
     // Register generic image interface
     Core::System::GetInstance().RegisterImageInterface(
         std::make_shared<Frontend::ImageInterface>());
+
+    // Register camera factory for camera support
+    LibRetro::Camera::RegisterCameraFactory();
 
     LibRetro::Input::Init();
 }
@@ -235,6 +239,9 @@ void retro_run() {
     // Check to see if we actually have any config updates to process.
     if (LibRetro::HasUpdatedConfig()) {
         LibRetro::ParseCoreOptions();
+        Core::System::GetInstance().ApplySettings();
+        // Update the framebuffer sizing to reflect new layout settings.
+        emu_instance->emu_window->UpdateLayout();
     }
 
     // Check if the screen swap button is pressed

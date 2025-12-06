@@ -97,6 +97,13 @@ bool CreateVulkanDevice(struct retro_vulkan_context* context, VkInstance instanc
                             VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     AddExtensionIfAvailable(enabled_exts, available_exts, VK_EXT_TOOLING_INFO_EXTENSION_NAME);
 
+#ifdef __APPLE__
+    // MoltenVK specific: Enable portability subset extension for compatibility
+    AddExtensionIfAvailable(enabled_exts, available_exts,
+                            "VK_KHR_portability_subset");
+    LOG_INFO(Render_Vulkan, "Apple platform detected - enabling MoltenVK compatibility mode");
+#endif
+
     // These are beneficial but blacklisted on some platforms due to driver bugs
     // For now, let the Instance class handle these decisions
     // AddExtensionIfAvailable(enabled_exts, available_exts,
@@ -120,6 +127,12 @@ bool CreateVulkanDevice(struct retro_vulkan_context* context, VkInstance instanc
     merged_features.geometryShader = VK_TRUE;    // Used for certain rendering effects
     merged_features.logicOp = VK_TRUE;           // Used for blending modes
     merged_features.samplerAnisotropy = VK_TRUE; // Used for texture filtering
+
+#ifdef __APPLE__
+    // MoltenVK doesn't support some features - be conservative
+    // Let the Instance class query actual capabilities
+    LOG_INFO(Render_Vulkan, "MoltenVK: Using conservative feature set");
+#endif
 
     // Find queue family with graphics support
     PFN_vkGetPhysicalDeviceQueueFamilyProperties vkGetPhysicalDeviceQueueFamilyProperties =
@@ -159,6 +172,40 @@ bool CreateVulkanDevice(struct retro_vulkan_context* context, VkInstance instanc
     device_info.enabledLayerCount = num_required_device_layers;
     device_info.ppEnabledLayerNames = required_device_layers;
     device_info.pEnabledFeatures = &merged_features;
+
+#ifdef __APPLE__
+    // MoltenVK requires portability subset features to be queried
+    VkPhysicalDevicePortabilitySubsetFeaturesKHR portability_features{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
+
+    // Check if portability subset extension is enabled
+    bool has_portability = false;
+    for (const char* ext : enabled_exts) {
+        if (ext && strcmp(ext, "VK_KHR_portability_subset") == 0) {
+            has_portability = true;
+            break;
+        }
+    }
+
+    if (has_portability) {
+        // Query portability features from physical device
+        PFN_vkGetPhysicalDeviceFeatures2KHR vkGetPhysicalDeviceFeatures2KHR =
+            (PFN_vkGetPhysicalDeviceFeatures2KHR)get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceFeatures2KHR");
+
+        if (vkGetPhysicalDeviceFeatures2KHR) {
+            VkPhysicalDeviceFeatures2KHR features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR};
+            features2.pNext = &portability_features;
+            vkGetPhysicalDeviceFeatures2KHR(gpu, &features2);
+
+            // Chain portability features to device creation
+            portability_features.pNext = const_cast<void*>(device_info.pNext);
+            device_info.pNext = &portability_features;
+
+            LOG_INFO(Render_Vulkan, "MoltenVK portability subset features enabled");
+        }
+    }
+#endif
 
     PFN_vkCreateDevice vkCreateDevice =
         (PFN_vkCreateDevice)get_instance_proc_addr(instance, "vkCreateDevice");
