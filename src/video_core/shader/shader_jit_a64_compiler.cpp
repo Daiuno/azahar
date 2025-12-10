@@ -5,6 +5,11 @@
 #include "common/arch.h"
 #if CITRA_ARCH(arm64)
 
+#ifdef __APPLE__
+#include <os/log.h>
+static os_log_t shader_log = os_log_create("com.azahar.shader", "Shader");
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -987,18 +992,33 @@ void JitShader::Compile(const std::array<u32, MAX_PROGRAM_CODE_LENGTH>* program_
     // Copy to executable memory
     const size_t code_size = code_vec.size() * sizeof(u32);
 
+#ifdef __APPLE__
+    os_log(shader_log, "%{public}s size=%zu", "[>>shader JIT] create CodeBlock,", code_size);
+#endif
     code_mem = std::make_unique<oaknut::CodeBlock>(code_size);
     code_mem->unprotect();
 
+    // iOS 26+双映射模式: program指针使用执行指针(ptr)
     program = reinterpret_cast<CompiledShader*>(reinterpret_cast<std::byte*>(code_mem->ptr()) +
                                                 program_offset);
 
-    // Copy to executable memory
-    std::memcpy(code_mem->ptr(), code_vec.data(), code_vec.size() * sizeof(u32));
+    // iOS 26+双映射模式: 写入到可写指针(wptr)
+#ifdef __APPLE__
+    os_log(shader_log, "%{public}s wptr=0x%llx, ptr=0x%llx, size=%zu, dual_mapping=%d", 
+           "[>>shader JIT] Copy the code:",
+           (unsigned long long)code_mem->wptr(), 
+           (unsigned long long)code_mem->ptr(), 
+           code_size, code_mem->is_dual_mapping() ? 1 : 0);
+#endif
+    std::memcpy(code_mem->wptr(), code_vec.data(), code_vec.size() * sizeof(u32));
 
     // Memory is ready to execute
     code_mem->protect();
+    // iOS 26+双映射模式: invalidate使用执行指针(ptr)
     code_mem->invalidate_all();
+#ifdef __APPLE__
+    os_log(shader_log, "%{public}s program=0x%llx", "[>>shader JIT] JIT cache is all set,", (unsigned long long)program);
+#endif
 
     // code_vec is no longer needed
     code_vec.clear();

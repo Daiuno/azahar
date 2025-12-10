@@ -65,8 +65,12 @@ if(MINGW)
   target_link_libraries(azahar_libretro PRIVATE crypt32)
 endif()
 
-if(IOS)
+if(IOS OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
   target_link_libraries(azahar_libretro PRIVATE "-framework CoreFoundation" "-framework Foundation")
+  # iOS JIT支持
+  target_compile_definitions(azahar_libretro PRIVATE IOS)
+  target_compile_definitions(citra_common PRIVATE IOS)
+  target_compile_definitions(citra_core PRIVATE IOS)
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
