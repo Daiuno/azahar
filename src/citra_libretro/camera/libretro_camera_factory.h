@@ -12,8 +12,8 @@
 namespace LibRetro::Camera {
 
 /**
- * A simple camera factory for LibRetro that provides a basic still image camera.
- * This allows games that require camera functionality to work properly.
+ * A camera factory for LibRetro that uses the frontend's camera driver.
+ * Falls back to blank camera if the frontend doesn't support camera.
  */
 class Factory final : public ::Camera::CameraFactory {
 public:

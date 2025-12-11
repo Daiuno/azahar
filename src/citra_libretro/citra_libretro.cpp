@@ -28,6 +28,7 @@
 #include "video_core/video_core.h"
 
 #include "citra_libretro/citra_libretro.h"
+#include "citra_libretro/camera/libretro_camera.h"
 #include "citra_libretro/camera/libretro_camera_factory.h"
 #include "citra_libretro/core_settings.h"
 #include "citra_libretro/environment.h"
@@ -39,8 +40,11 @@
 #include "common/string_util.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
+#include "citra_libretro/applets/swkbd_apple.h"
 #include "core/frontend/image_interface.h"
 #include "core/hle/kernel/memory.h"
+#include "core/hle/service/nfc/nfc.h"
+#include "core/hle/service/nfc/nfc_u.h"
 #include "core/loader/loader.h"
 #include "core/memory.h"
 
@@ -59,6 +63,10 @@ public:
 };
 
 CitraLibRetro* emu_instance;
+
+// Apple keyboard callback storage
+static retro_keyboard_callback_t s_retro_keyboard_callback = nullptr;
+static std::shared_ptr<SoftwareKeyboard::AppleKeyboard> s_apple_keyboard;
 
 void retro_init() {
     emu_instance = new CitraLibRetro();
@@ -443,6 +451,9 @@ bool retro_load_game(const struct retro_game_info* info) {
 
     UpdateSettings();
 
+    // Initialize libretro camera interface
+    LibRetro::Camera::InitializeCameraInterface();
+
     // If using HW rendering, don't actually load the game here. azahar wants
     // the graphics context ready and available before calling System::Load.
     LibRetro::settings.file_path = info->path;
@@ -513,6 +524,7 @@ bool retro_load_game(const struct retro_game_info* info) {
 
 void retro_unload_game() {
     LOG_DEBUG(Frontend, "Unloading game...");
+    LibRetro::Camera::ShutdownCameraInterface();
     Core::System::GetInstance().Shutdown();
 }
 
@@ -577,3 +589,96 @@ size_t retro_get_memory_size(unsigned id) {
 void retro_cheat_reset() {}
 
 void retro_cheat_set(unsigned index, bool enabled, const char* code) {}
+
+// Amiibo support functions - declared in same style as other retro_ functions
+bool retro_load_amiibo(const char* path) {
+    if (!Core::System::GetInstance().IsPoweredOn()) {
+        return false;
+    }
+    
+    auto nfc = Core::System::GetInstance().ServiceManager().GetService<Service::NFC::NFC_U>("nfc:u");
+    if (!nfc) {
+        return false;
+    }
+    
+    return nfc->LoadAmiibo(path);
+}
+
+bool retro_is_searching_amiibo() {
+    if (!Core::System::GetInstance().IsPoweredOn()) {
+        return false;
+    }
+    
+    auto nfc = Core::System::GetInstance().ServiceManager().GetService<Service::NFC::NFC_U>("nfc:u");
+    if (!nfc) {
+        return false;
+    }
+    
+    return nfc->IsSearchingForAmiibos();
+}
+
+void retro_remove_amiibo() {
+    if (!Core::System::GetInstance().IsPoweredOn()) {
+        return;
+    }
+    
+    auto nfc = Core::System::GetInstance().ServiceManager().GetService<Service::NFC::NFC_U>("nfc:u");
+    if (!nfc) {
+        return;
+    }
+    
+    nfc->RemoveAmiibo();
+}
+
+// Software keyboard support functions
+void retro_set_keyboard_callback(retro_keyboard_callback_t callback) {
+    s_retro_keyboard_callback = callback;
+    
+    if (callback) {
+        // Create and register AppleKeyboard if callback is set
+        if (!s_apple_keyboard) {
+            s_apple_keyboard = std::make_shared<SoftwareKeyboard::AppleKeyboard>();
+        }
+        
+        // Set up the internal callback that converts to C API
+        SoftwareKeyboard::AppleKeyboard::SetKeyboardRequestCallback(
+            [](const SoftwareKeyboard::AppleKeyboardConfig& config) {
+                if (s_retro_keyboard_callback) {
+                    retro_keyboard_config c_config{};
+                    c_config.button_config = config.button_config;
+                    c_config.accept_mode = config.accept_mode;
+                    c_config.multiline_mode = config.multiline_mode;
+                    c_config.max_text_length = config.max_text_length;
+                    c_config.max_digits = config.max_digits;
+                    c_config.hint_text = config.hint_text;
+                    c_config.button_text = config.button_text;
+                    c_config.button_text_count = config.button_text_count;
+                    c_config.prevent_digit = config.prevent_digit;
+                    c_config.prevent_at = config.prevent_at;
+                    c_config.prevent_percent = config.prevent_percent;
+                    c_config.prevent_backslash = config.prevent_backslash;
+                    c_config.prevent_profanity = config.prevent_profanity;
+                    c_config.enable_callback = config.enable_callback;
+                    
+                    s_retro_keyboard_callback(&c_config);
+                }
+            });
+        
+        // Register the AppleKeyboard with the system
+        Core::System::GetInstance().RegisterSoftwareKeyboard(s_apple_keyboard);
+        LOG_INFO(Frontend, "Apple keyboard registered");
+    } else {
+        // Unregister: restore default keyboard
+        SoftwareKeyboard::AppleKeyboard::SetKeyboardRequestCallback(nullptr);
+        Frontend::RegisterDefaultApplets(Core::System::GetInstance());
+        s_apple_keyboard.reset();
+        LOG_INFO(Frontend, "Apple keyboard unregistered, using default");
+    }
+}
+
+void retro_keyboard_input(const char* text, int button) {
+    if (SoftwareKeyboard::AppleKeyboard::s_current_instance) {
+        std::string text_str = text ? text : "";
+        SoftwareKeyboard::AppleKeyboard::s_current_instance->SubmitInput(text_str, static_cast<u8>(button));
+    }
+}

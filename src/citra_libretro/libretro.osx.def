@@ -25,3 +25,8 @@ _retro_unload_game
 _retro_get_region
 _retro_get_memory_data
 _retro_get_memory_size
+_retro_load_amiibo
+_retro_is_searching_amiibo
+_retro_remove_amiibo
+_retro_set_keyboard_callback
+_retro_keyboard_input

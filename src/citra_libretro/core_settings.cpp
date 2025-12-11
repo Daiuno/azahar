@@ -1104,11 +1104,11 @@ void ParseCoreOptions(void) {
 #endif
     Settings::values.filter_mode = false;
 
-    // Initialize camera settings to use blank camera
-    // LibRetro uses a simple blank camera that provides black frames
+    // Initialize camera settings to use libretro camera
+    // Config string contains the camera ID: 0=OuterRight (back), 1=Inner (front), 2=OuterLeft (back)
     for (int i = 0; i < 3; ++i) {
         Settings::values.camera_name[i] = "blank";
-        Settings::values.camera_config[i] = "";
+        Settings::values.camera_config[i] = std::to_string(i);  // Pass camera ID as config
         Settings::values.camera_flip[i] = 0;
     }
 
