@@ -126,12 +126,20 @@ Result TranslateCommandBuffer(Kernel::KernelSystem& kernel, Memory::MemorySystem
 
             // Note: The real kernel doesn't seem to have any error recovery mechanisms for this
             // case.
-            ASSERT_MSG(target_buffer.descriptor.size >= data.size(),
-                       "Static buffer data is too big");
+            if (target_buffer.descriptor.size == 0 && target_buffer.address == 0) {
+                // Target buffer is not set up, skip this static buffer transfer
+                // This can happen with improperly initialized TLS or certain homebrew
+                LOG_WARNING(Kernel, "Static buffer target not initialized, skipping transfer for buffer_id={}", 
+                            static_cast<u32>(bufferInfo.buffer_id));
+                cmd_buf[i++] = 0;
+            } else {
+                ASSERT_MSG(target_buffer.descriptor.size >= data.size(),
+                           "Static buffer data is too big (target size: {}, data size: {})", 
+                           static_cast<u32>(target_buffer.descriptor.size), data.size());
 
-            memory.WriteBlock(*dst_process, target_buffer.address, data.data(), data.size());
-
-            cmd_buf[i++] = target_buffer.address;
+                memory.WriteBlock(*dst_process, target_buffer.address, data.data(), data.size());
+                cmd_buf[i++] = target_buffer.address;
+            }
             break;
         }
         case IPC::DescriptorType::MappedBuffer: {

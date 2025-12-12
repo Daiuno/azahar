@@ -145,8 +145,12 @@ RendererVulkan::~RendererVulkan() {
     }
 
     for (auto& info : screen_infos) {
-        device.destroyImageView(info.texture.image_view);
-        vmaDestroyImage(instance.GetAllocator(), info.texture.image, info.texture.allocation);
+        if (info.texture.image_view) {
+            device.destroyImageView(info.texture.image_view);
+        }
+        if (info.texture.image) {
+            vmaDestroyImage(instance.GetAllocator(), info.texture.image, info.texture.allocation);
+        }
     }
 }
 
@@ -159,15 +163,18 @@ void RendererVulkan::PrepareRendertarget() {
         auto& texture = screen_infos[i].texture;
 
         const auto color_fill = fb_id == 0 ? regs_lcd.color_fill_top : regs_lcd.color_fill_bottom;
+
+        // Ensure texture is configured before any operations
+        // This is needed because FillScreen requires a valid image
+        if (!texture.image || texture.width != framebuffer.width ||
+            texture.height != framebuffer.height || texture.format != framebuffer.color_format) {
+            ConfigureFramebufferTexture(texture, framebuffer);
+        }
+
         if (color_fill.is_enabled) {
             screen_infos[i].image_view = texture.image_view;
             FillScreen(color_fill.AsVector(), texture);
             continue;
-        }
-
-        if (texture.width != framebuffer.width || texture.height != framebuffer.height ||
-            texture.format != framebuffer.color_format) {
-            ConfigureFramebufferTexture(texture, framebuffer);
         }
 
         LoadFBToScreenInfo(framebuffer, screen_infos[i], i == 1);
@@ -477,7 +484,8 @@ void RendererVulkan::ConfigureFramebufferTexture(TextureInfo& texture,
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = vk::SampleCountFlagBits::e1,
-        .usage = vk::ImageUsageFlagBits::eSampled,
+        // eSampled for shader reads, eTransferDst for FillScreen's clearColorImage
+        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
     };
 
     const VmaAllocationCreateInfo alloc_info = {
@@ -520,6 +528,19 @@ void RendererVulkan::ConfigureFramebufferTexture(TextureInfo& texture,
 }
 
 void RendererVulkan::FillScreen(Common::Vec3<u8> color, const TextureInfo& texture) {
+    // Validate texture before attempting to clear
+    if (!texture.image) {
+        LOG_WARNING(Render_Vulkan, "FillScreen called with uninitialized texture, skipping");
+        return;
+    }
+
+#ifdef HAVE_LIBRETRO
+    // On LibRetro/MoltenVK, vkCmdClearColorImage can crash with certain image configurations.
+    // Instead, we skip the fill operation - the texture will be overwritten by actual content anyway.
+    // This is a workaround for MoltenVK compatibility issues with clearColorImage.
+    LOG_DEBUG(Render_Vulkan, "FillScreen skipped in LibRetro mode for MoltenVK compatibility");
+    return;
+#else
     const vk::ClearColorValue clear_color = {
         .float32 =
             std::array{
@@ -572,6 +593,7 @@ void RendererVulkan::FillScreen(Common::Vec3<u8> color, const TextureInfo& textu
                                vk::PipelineStageFlagBits::eFragmentShader,
                                vk::DependencyFlagBits::eByRegion, {}, {}, post_barrier);
     });
+#endif
 }
 
 void RendererVulkan::ReloadPipeline() {

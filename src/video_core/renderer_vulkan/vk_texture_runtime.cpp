@@ -308,6 +308,13 @@ bool TextureRuntime::Reinterpret(Surface& source, Surface& dest,
 bool TextureRuntime::ClearTexture(Surface& surface, const VideoCore::TextureClear& clear) {
     renderpass_cache.EndRendering();
 
+#ifdef HAVE_LIBRETRO
+    // On LibRetro/MoltenVK, vkCmdClearColorImage can crash with certain image configurations.
+    // Always use the renderpass-based clear which is more compatible.
+    ClearTextureWithRenderpass(surface, clear);
+    return true;
+#endif
+
     const RecordParams params = {
         .aspect = surface.Aspect(),
         .pipeline_flags = surface.PipelineStageFlags(),

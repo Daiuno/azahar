@@ -111,6 +111,14 @@ bool CreateVulkanDevice(struct retro_vulkan_context* context, VkInstance instanc
     // AddExtensionIfAvailable(enabled_exts, available_exts,
     // VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
 
+    // Query actual device features before requesting
+    PFN_vkGetPhysicalDeviceFeatures vkGetPhysicalDeviceFeatures =
+        (PFN_vkGetPhysicalDeviceFeatures)get_instance_proc_addr(
+            instance, "vkGetPhysicalDeviceFeatures");
+
+    VkPhysicalDeviceFeatures device_features{};
+    vkGetPhysicalDeviceFeatures(gpu, &device_features);
+
     // Merge frontend's required features with our baseline
     VkPhysicalDeviceFeatures merged_features{};
     if (required_features) {
@@ -122,16 +130,31 @@ bool CreateVulkanDevice(struct retro_vulkan_context* context, VkInstance instanc
         }
     }
 
-    // Request features we need (these will be OR'd with frontend requirements)
-    // The Instance class will validate these against actual device capabilities
-    merged_features.geometryShader = VK_TRUE;    // Used for certain rendering effects
-    merged_features.logicOp = VK_TRUE;           // Used for blending modes
-    merged_features.samplerAnisotropy = VK_TRUE; // Used for texture filtering
+    // Request features we need ONLY if the device actually supports them
+    // This is critical for MoltenVK which doesn't support geometry shaders or logicOp
+    if (device_features.geometryShader) {
+        merged_features.geometryShader = VK_TRUE;
+        LOG_INFO(Render_Vulkan, "Enabling geometryShader feature");
+    } else {
+        LOG_INFO(Render_Vulkan, "geometryShader not supported by device, skipping");
+    }
+
+    if (device_features.logicOp) {
+        merged_features.logicOp = VK_TRUE;
+        LOG_INFO(Render_Vulkan, "Enabling logicOp feature");
+    } else {
+        LOG_INFO(Render_Vulkan, "logicOp not supported by device, skipping");
+    }
+
+    if (device_features.samplerAnisotropy) {
+        merged_features.samplerAnisotropy = VK_TRUE;
+        LOG_INFO(Render_Vulkan, "Enabling samplerAnisotropy feature");
+    } else {
+        LOG_INFO(Render_Vulkan, "samplerAnisotropy not supported by device, skipping");
+    }
 
 #ifdef __APPLE__
-    // MoltenVK doesn't support some features - be conservative
-    // Let the Instance class query actual capabilities
-    LOG_INFO(Render_Vulkan, "MoltenVK: Using conservative feature set");
+    LOG_INFO(Render_Vulkan, "MoltenVK: Using device-supported feature set only");
 #endif
 
     // Find queue family with graphics support
@@ -388,13 +411,23 @@ PresentWindow::PresentWindow(Frontend::EmuWindow& emu_window_, const Instance& i
     // Create render pass for LibRetro output
     present_renderpass = CreateRenderpass();
 
-    // Start with initial dimensions from layout
+    // Start with initial dimensions from layout, use sensible defaults if not available
     const auto& layout = emu_window.GetFramebufferLayout();
-    CreateOutputTexture(layout.width, layout.height);
+    u32 init_width = layout.width > 0 ? layout.width : 400;   // 3DS top screen width
+    u32 init_height = layout.height > 0 ? layout.height : 480; // Combined screens height
+
+    LOG_INFO(Render_Vulkan, "Initial layout dimensions: {}x{}, using: {}x{}",
+             layout.width, layout.height, init_width, init_height);
+
+    CreateOutputTexture(init_width, init_height);
     CreateFrameResources();
 
-    LOG_INFO(Render_Vulkan, "LibRetro PresentWindow initialized with {}x{}", layout.width,
-             layout.height);
+    if (frame_pool.empty()) {
+        LOG_CRITICAL(Render_Vulkan, "Failed to initialize LibRetro PresentWindow - no frames created");
+        throw std::runtime_error("Failed to create LibRetro frame resources");
+    }
+
+    LOG_INFO(Render_Vulkan, "LibRetro PresentWindow initialized with {}x{}", init_width, init_height);
 }
 
 PresentWindow::~PresentWindow() {
@@ -572,6 +605,15 @@ void PresentWindow::CreateFrameResources() {
     const vk::Device device = instance.GetDevice();
     const u32 frame_count = 2; // Double buffering for LibRetro
 
+    // Validate that output texture exists before creating frame resources
+    if (!output_image || !output_image_view || output_width == 0 || output_height == 0) {
+        LOG_ERROR(Render_Vulkan, "Cannot create frame resources: output texture not initialized "
+                                 "(image={}, view={}, {}x{})",
+                  static_cast<bool>(output_image), static_cast<bool>(output_image_view),
+                  output_width, output_height);
+        return;
+    }
+
     // Destroy existing frames
     DestroyFrameResources();
 
@@ -674,12 +716,27 @@ Frame* PresentWindow::GetRenderFrame() {
                   frame_index);
     }
 
-    return &frame_pool[frame_index];
+    Frame* frame = &frame_pool[frame_index];
+
+    // Validate frame has valid resources before returning
+    if (!frame->image_view || !frame->framebuffer) {
+        LOG_ERROR(Render_Vulkan, "Frame {} has invalid resources (image_view={}, framebuffer={})",
+                  frame_index, static_cast<bool>(frame->image_view),
+                  static_cast<bool>(frame->framebuffer));
+        return nullptr;
+    }
+
+    return frame;
 }
 
 void PresentWindow::RecreateFrame(Frame* frame, u32 width, u32 height) {
     if (!frame) {
         LOG_ERROR(Render_Vulkan, "Invalid frame for recreation");
+        return;
+    }
+
+    if (width == 0 || height == 0) {
+        LOG_ERROR(Render_Vulkan, "Invalid dimensions for frame recreation: {}x{}", width, height);
         return;
     }
 
@@ -692,14 +749,21 @@ void PresentWindow::RecreateFrame(Frame* frame, u32 width, u32 height) {
 
     // Wait for frame to be idle
     const vk::Device device = instance.GetDevice();
-    [[maybe_unused]] const vk::Result wait_result =
-        device.waitForFences(frame->present_done, VK_TRUE, UINT64_MAX);
+    if (frame->present_done) {
+        [[maybe_unused]] const vk::Result wait_result =
+            device.waitForFences(frame->present_done, VK_TRUE, UINT64_MAX);
+    }
 
     // Recreate output texture with new dimensions
     CreateOutputTexture(width, height);
 
-    // Recreate frame resources
+    // Recreate frame resources - this will update all frames with new image_view
     CreateFrameResources();
+
+    if (frame_pool.empty()) {
+        LOG_ERROR(Render_Vulkan, "Failed to recreate frame resources");
+        return;
+    }
 
     LOG_INFO(Render_Vulkan, "LibRetro frame recreated for {}x{}", width, height);
 }
@@ -707,6 +771,11 @@ void PresentWindow::RecreateFrame(Frame* frame, u32 width, u32 height) {
 void PresentWindow::Present(Frame* frame) {
     if (!frame) {
         LOG_ERROR(Render_Vulkan, "Cannot present null frame");
+        return;
+    }
+
+    if (!frame->image_view) {
+        LOG_ERROR(Render_Vulkan, "Cannot present frame with null image_view");
         return;
     }
 

@@ -289,11 +289,22 @@ Result HLERequestContext::WriteToOutgoingCommandBuffer(u32_le* dst_cmdbuf,
             IPC::StaticBufferDescInfo target_descriptor{dst_cmdbuf[static_buffer_offset]};
             VAddr target_address = dst_cmdbuf[static_buffer_offset + 1];
 
-            ASSERT_MSG(target_descriptor.size >= data.size(), "Static buffer data is too big");
+            // Note: The real kernel doesn't seem to have any error recovery mechanisms for this
+            // case.
+            if (target_descriptor.size == 0 && target_address == 0) {
+                // Target buffer is not set up, skip this static buffer transfer
+                // This can happen with improperly initialized TLS or certain homebrew
+                LOG_WARNING(Kernel, "Static buffer target not initialized, skipping transfer for buffer_id={}", 
+                            static_cast<u32>(buffer_info.buffer_id));
+                dst_cmdbuf[i++] = 0;
+            } else {
+                ASSERT_MSG(target_descriptor.size >= data.size(), 
+                           "Static buffer data is too big (target size: {}, data size: {})", 
+                           static_cast<u32>(target_descriptor.size), data.size());
 
-            kernel.memory.WriteBlock(dst_process, target_address, data.data(), data.size());
-
-            dst_cmdbuf[i++] = target_address;
+                kernel.memory.WriteBlock(dst_process, target_address, data.data(), data.size());
+                dst_cmdbuf[i++] = target_address;
+            }
             break;
         }
         case IPC::DescriptorType::MappedBuffer: {

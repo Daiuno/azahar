@@ -116,26 +116,31 @@ public:
 
         if (sensor_get_input_callback) {
             if (accel_enabled) {
-                // Get accelerometer data (in g units)
-                // LibRetro coordinate system matches 3DS: X=LEFT, Y=OUT, Z=UP
-                accel.x =
-                    sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_X) * sensitivity;
-                accel.y =
-                    sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_Y) * sensitivity;
-                accel.z =
-                    sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_Z) * sensitivity;
+                // Get accelerometer data from iOS CoreMotion
+                // iOS coordinate system: X=right, Y=up, Z=toward user
+                // 3DS coordinate system: X=left, Y=out of screen, Z=up
+                // Transform: 3DS.X = -iOS.X, 3DS.Y = iOS.Z, 3DS.Z = iOS.Y
+                float ios_x = sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_X);
+                float ios_y = sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_Y);
+                float ios_z = sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_Z);
+                
+                accel.x = -ios_x * sensitivity;  // iOS right -> 3DS left
+                accel.y = ios_z * sensitivity;   // iOS toward user -> 3DS out of screen
+                accel.z = ios_y * sensitivity;   // iOS up -> 3DS up
             }
 
             if (gyro_enabled) {
                 // Get gyroscope data (convert to degrees/sec)
-                // LibRetro gives radians/sec, 3DS expects degrees/sec
+                // iOS CoreMotion gives radians/sec, 3DS expects degrees/sec
+                // Apply same coordinate transformation as accelerometer
                 constexpr float RAD_TO_DEG = 180.0f / 3.14159265f;
-                gyro.x = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_X) * RAD_TO_DEG *
-                         sensitivity;
-                gyro.y = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_Y) * RAD_TO_DEG *
-                         sensitivity;
-                gyro.z = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_Z) * RAD_TO_DEG *
-                         sensitivity;
+                float ios_x = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_X);
+                float ios_y = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_Y);
+                float ios_z = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_Z);
+                
+                gyro.x = -ios_x * RAD_TO_DEG * sensitivity;
+                gyro.y = ios_z * RAD_TO_DEG * sensitivity;
+                gyro.z = ios_y * RAD_TO_DEG * sensitivity;
             }
         }
 
