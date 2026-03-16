@@ -58,6 +58,10 @@ bool GetCameraInterface(struct retro_camera_callback* camera_callback) {
     return environ_cb(RETRO_ENVIRONMENT_GET_CAMERA_INTERFACE, camera_callback);
 }
 
+bool GetMicrophoneInterface(struct retro_microphone_interface* microphone_interface) {
+    return environ_cb(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, microphone_interface);
+}
+
 bool SwitchCamera(bool use_front_camera) {
     // Custom environment call to switch camera device
     // RETRO_ENVIRONMENT_SET_CAMERA_DEVICE = 80 | RETRO_ENVIRONMENT_EXPERIMENTAL

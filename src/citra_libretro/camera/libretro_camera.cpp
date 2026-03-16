@@ -22,10 +22,7 @@ static void CameraFrameCallback(const uint32_t* buffer, unsigned width, unsigned
                                 size_t pitch) {
     // Debug: Log callback invocation (only occasionally)
     static int callback_count = 0;
-    if (++callback_count % 60 == 0) {
-        LOG_DEBUG(Service_CAM, "LibRetro: CameraFrameCallback {} ({}x{}, pitch={})", 
-                  callback_count, width, height, pitch);
-    }
+    if (++callback_count % 60 == 0) {}
     LibRetroCamera::OnCameraFrame(buffer, width, height, pitch);
 }
 
@@ -164,9 +161,7 @@ void LibRetroCamera::OnCameraFrame(const uint32_t* buffer, unsigned width, unsig
     
     // Debug: Log frame reception (only occasionally to avoid spam)
     static int frame_count = 0;
-    if (++frame_count % 60 == 0) {
-        LOG_DEBUG(Service_CAM, "LibRetro: Received frame {} ({}x{})", frame_count, width, height);
-    }
+    if (++frame_count % 60 == 0) {}
 }
 
 u16 LibRetroCamera::XRGB8888ToRGB565(u32 pixel) {

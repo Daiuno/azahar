@@ -8,6 +8,8 @@ add_library(azahar_libretro SHARED
         input/input_factory.h
         input/mouse_tracker.cpp
         input/mouse_tracker.h
+        audio/libretro_input.cpp
+        audio/libretro_input.h
         camera/libretro_camera.cpp
         camera/libretro_camera.h
         camera/libretro_camera_factory.cpp
@@ -75,12 +77,44 @@ if(IOS OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
   target_compile_definitions(azahar_libretro PRIVATE IOS)
   target_compile_definitions(citra_common PRIVATE IOS)
   target_compile_definitions(citra_core PRIVATE IOS)
+  
+  # For iOS, create a proper framework structure
+  set_target_properties(azahar_libretro PROPERTIES
+    OUTPUT_NAME "azahar.libretro"
+    FRAMEWORK TRUE
+    FRAMEWORK_VERSION A
+    MACOSX_FRAMEWORK_IDENTIFIER com.azahar.libretro.azahar
+    MACOSX_FRAMEWORK_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
+    MACOSX_FRAMEWORK_SHORT_VERSION_STRING 1.0.0
+    MACOSX_FRAMEWORK_BUNDLE_VERSION 1.0.0
+    PUBLIC_HEADER ""
+    XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
+    XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
+    XCODE_ATTRIBUTE_MACH_O_TYPE mh_dylib
+    XCODE_ATTRIBUTE_DYLIB_INSTALL_NAME_BASE "@rpath"
+  )
+  
+  # iOS specific linker flags to ensure App Store compatibility
+  target_link_options(azahar_libretro PRIVATE
+    -Wl,-install_name,@rpath/azahar.libretro.framework/azahar.libretro
+    -Wl,-compatibility_version,1.0.0
+    -Wl,-current_version,1.0.0
+    -Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libretro.osx.def
+  )
+  
+  # Add code signing step for iOS
+  add_custom_command(TARGET azahar_libretro POST_BUILD
+    COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:azahar_libretro>/azahar.libretro"
+    COMMENT "Code signing azahar.libretro framework"
+  )
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
     CMAKE_SYSTEM_NAME STREQUAL "iOS" OR
     CMAKE_SYSTEM_NAME STREQUAL "tvOS")
-  target_link_libraries(azahar_libretro PRIVATE "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libretro.osx.def")
+  if(NOT IOS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_link_libraries(azahar_libretro PRIVATE "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libretro.osx.def")
+  endif()
 else()
   target_link_libraries(azahar_libretro PRIVATE "-Wl,-Bsymbolic")
 endif()

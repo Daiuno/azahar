@@ -370,6 +370,7 @@ struct MIC_U::Impl {
     }
 
     void CreateMic() {
+        LOG_INFO(Service_MIC, "LibRetro: Microphone CreateMic");
         const auto was_sampling = mic && mic->IsSampling();
         if (was_sampling) {
             mic->StopSampling();

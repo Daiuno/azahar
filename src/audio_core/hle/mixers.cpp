@@ -77,9 +77,9 @@ void Mixers::ParseConfig(DspConfiguration& config) {
         LOG_TRACE(Audio_DSP, "mixers headphones_connected={}", config.headphones_connected);
     }
 
-    if (config.dirty_raw) {
-        LOG_DEBUG(Audio_DSP, "mixers remaining_dirty={:x}", config.dirty_raw);
-    }
+    // if (config.dirty_raw) {
+    //     LOG_DEBUG(Audio_DSP, "mixers remaining_dirty={:x}", config.dirty_raw);
+    // }
 
     config.dirty_raw = 0;
 }

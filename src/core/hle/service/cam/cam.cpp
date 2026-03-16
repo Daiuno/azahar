@@ -417,9 +417,6 @@ void Module::Interface::SetReceiving(Kernel::HLERequestContext& ctx) {
         rb.Push(ResultInvalidEnumValue);
         rb.PushCopyObjects<Kernel::Object>(nullptr);
     }
-
-    LOG_DEBUG(Service_CAM, "called, addr=0x{:X}, port_select={}, image_size={}, trans_unit={}",
-              dest, port_select.m_val, image_size, trans_unit);
 }
 
 void Module::Interface::IsFinishedReceiving(Kernel::HLERequestContext& ctx) {

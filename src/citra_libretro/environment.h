@@ -35,6 +35,9 @@ bool GetSensorInterface(struct retro_sensor_interface* sensor_interface);
 /// Gets the camera interface from the frontend
 bool GetCameraInterface(struct retro_camera_callback* camera_callback);
 
+/// Gets the microphone interface from the frontend
+bool GetMicrophoneInterface(struct retro_microphone_interface* microphone_interface);
+
 /// Switches between front and back cameras (if supported by frontend)
 bool SwitchCamera(bool use_front_camera);
 

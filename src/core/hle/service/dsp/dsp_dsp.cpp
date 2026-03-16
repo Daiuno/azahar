@@ -292,7 +292,6 @@ void DSP_DSP::GetHeadphoneStatus(Kernel::HLERequestContext& ctx) {
     rb.Push(ResultSuccess);
     rb.Push(false); /// u8, 0 = not inserted, 1 = inserted
 
-    LOG_DEBUG(Service_DSP, "called");
 }
 
 void DSP_DSP::ForceHeadphoneOut(Kernel::HLERequestContext& ctx) {

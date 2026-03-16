@@ -28,6 +28,7 @@
 #include "video_core/video_core.h"
 
 #include "citra_libretro/citra_libretro.h"
+#include "citra_libretro/audio/libretro_input.h"
 #include "citra_libretro/camera/libretro_camera.h"
 #include "citra_libretro/camera/libretro_camera_factory.h"
 #include "citra_libretro/core_settings.h"
@@ -90,6 +91,12 @@ void retro_init() {
     // Register camera factory for camera support
     LibRetro::Camera::RegisterCameraFactory();
 
+    // Register microphone permission check (always allow for libretro)
+    Core::System::GetInstance().RegisterMicPermissionCheck([]() { return true; });
+
+    // Initialize microphone interface
+    LibRetro::Audio::InitializeMicrophoneInterface();
+
     LibRetro::Input::Init();
 }
 
@@ -99,6 +106,7 @@ void retro_deinit() {
         Core::System::GetInstance().Shutdown();
     }
 
+    LibRetro::Audio::ShutdownMicrophoneInterface();
     LibRetro::Input::Shutdown();
 
     delete emu_instance;
