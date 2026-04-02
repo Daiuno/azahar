@@ -9,6 +9,14 @@ add_library(azahar_libretro_common OBJECT
         input/input_factory.h
         input/mouse_tracker.cpp
         input/mouse_tracker.h
+        audio/libretro_input.cpp
+        audio/libretro_input.h
+        camera/libretro_camera.cpp
+        camera/libretro_camera.h
+        camera/libretro_camera_factory.cpp
+        camera/libretro_camera_factory.h
+        applets/swkbd_apple.cpp
+        applets/swkbd_apple.h
         $<$<BOOL:${ENABLE_VULKAN}>: libretro_vk.cpp libretro_vk.h>
         environment.cpp
         environment.h

@@ -60,6 +60,17 @@ bool GetMicrophoneInterface(struct retro_microphone_interface* mic_interface) {
     return environ_cb(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, mic_interface);
 }
 
+bool GetCameraInterface(struct retro_camera_callback* camera_callback) {
+    return environ_cb(RETRO_ENVIRONMENT_GET_CAMERA_INTERFACE, camera_callback);
+}
+
+bool SwitchCamera(bool use_front_camera) {
+    // Custom environment call to switch camera device
+    // RETRO_ENVIRONMENT_SET_CAMERA_DEVICE = 80 | RETRO_ENVIRONMENT_EXPERIMENTAL
+    const unsigned RETRO_ENVIRONMENT_SET_CAMERA_DEVICE = (80 | 0x10000);
+    return environ_cb(RETRO_ENVIRONMENT_SET_CAMERA_DEVICE, &use_front_camera);
+}
+
 Settings::GraphicsAPI GetPreferredRenderer() {
     // try and maintain the current driver
     retro_hw_context_type context_type = RETRO_HW_CONTEXT_OPENGL;

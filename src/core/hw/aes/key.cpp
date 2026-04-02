@@ -32,7 +32,9 @@ namespace {
 // On a real 3DS the generation for the normal key is hardware based, and thus the constant can't
 // get dumped. Generated normal keys are also not accessible on a 3DS. The used formula for
 // calculating the constant is a software implementation of what the hardware generator does.
-AESKey generator_constant;
+// Default value for compatibility with Citra-style aes_keys.txt (without :AES mode marker)
+AESKey generator_constant = {{0x1F, 0xF9, 0xE9, 0xAA, 0xC5, 0xFE, 0x04, 0x08, 0x02, 0x45,
+                              0x91, 0xDC, 0x5D, 0x52, 0x76, 0x8A}};
 
 AESKey HexToKey(const std::string& hex) {
     if (hex.size() < 32) {
@@ -150,6 +152,17 @@ void LoadPresetKeys() {
     auto s = GetKeysStream();
 
     std::string mode = "";
+    bool has_mode_marker = false;
+    
+    // First pass: check if file contains any mode markers
+    std::string content = s.str();
+    if (content.find("\n:") != std::string::npos || content.starts_with(":")) {
+        has_mode_marker = true;
+    }
+    
+    // Reset stream for actual parsing
+    s.clear();
+    s.seekg(0);
 
     while (!s.eof()) {
         std::string line;
@@ -165,7 +178,9 @@ void LoadPresetKeys() {
             continue;
         }
 
-        if (mode != "AES") {
+        // If file has mode markers, only parse in AES mode
+        // If file has no mode markers (Citra format), parse all lines
+        if (has_mode_marker && mode != "AES") {
             continue;
         }
 

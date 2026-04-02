@@ -72,6 +72,7 @@ static constexpr const char* swap_screen = citra_setting(BaseKeys::swap_screen);
 static constexpr const char* swap_screen_mode = citra_setting(BaseKeys::swap_screen_mode);
 static constexpr const char* large_screen_proportion =
     citra_setting(BaseKeys::large_screen_proportion);
+static constexpr const char* custom_layout_config = citra_setting(BaseKeys::custom_layout_config);
 } // namespace layout
 
 namespace storage {
@@ -454,6 +455,7 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
             { "single_screen", "Single Screen Only" },
             { "large_screen", "Large Screen, Small Screen" },
             { "side_by_side", "Side by Side" },
+            { "custom", "Custom" },
             { nullptr, nullptr }
         },
         "default"
@@ -519,6 +521,26 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
             { nullptr, nullptr }
         },
         "4.00"
+    },
+    {
+        config::layout::custom_layout_config,
+        "Custom Layout Configuration",
+        "Custom Config",
+        "Custom layout parameters as comma-separated values: "
+        "topX,topY,topWidth,topHeight,bottomX,bottomY,bottomWidth,bottomHeight. "
+        "Only used when Screen Layout is set to Custom. "
+        "Example: \"0,0,400,240,0,240,320,240\" for vertical layout.",
+        nullptr,
+        config::category::layout,
+        {
+            { "0,0,400,240,0,240,320,240", "Vertical (Default)" },
+            { "0,0,400,240,400,0,320,240", "Side by Side" },
+            { "0,0,800,480,0,480,640,480", "Large Vertical" },
+            { "40,0,400,240,440,0,320,240", "Side by Side (Centered)" },
+            { "0,120,400,240,400,120,320,240", "Side by Side (Vertically Centered)" },
+            { nullptr, nullptr }
+        },
+        "0,0,400,240,0,240,320,240"
     },
 
     // Storage Category
@@ -945,12 +967,92 @@ static Settings::LayoutOption GetLayoutOption(const std::string& name) {
         return Settings::LayoutOption::LargeScreen;
     if (name == "side_by_side" || name == "Side by Side")
         return Settings::LayoutOption::SideScreen;
+    if (name == "custom" || name == "Custom")
+        return Settings::LayoutOption::CustomLayout;
     return Settings::LayoutOption::Default;
 }
 
+static void ParseCustomLayoutConfig(const std::string& config_str) {
+    // Parse format: "topX,topY,topWidth,topHeight,bottomX,bottomY,bottomWidth,bottomHeight[,bufferWidth,bufferHeight]"
+    std::vector<u16> values;
+    std::string current;
+    
+    for (char c : config_str) {
+        if (c == ',') {
+            if (!current.empty()) {
+                try {
+                    // Support floating point values and convert to u16
+                    float val = std::stof(current);
+                    values.push_back(static_cast<u16>(val));
+                    current.clear();
+                } catch (...) {
+                    LOG_WARNING(Frontend, "Failed to parse custom layout value: {}", current);
+                    current.clear();
+                }
+            }
+        } else if (c != ' ') {
+            current += c;
+        }
+    }
+    
+    // Parse the last value
+    if (!current.empty()) {
+        try {
+            float val = std::stof(current);
+            values.push_back(static_cast<u16>(val));
+        } catch (...) {
+            LOG_WARNING(Frontend, "Failed to parse custom layout value: {}", current);
+        }
+    }
+    
+    // We expect 8 or 10 values
+    // 8 values: topX, topY, topWidth, topHeight, bottomX, bottomY, bottomWidth, bottomHeight
+    // 10 values: above + bufferWidth, bufferHeight
+    if (values.size() >= 8) {
+        Settings::values.custom_top_x = values[0];
+        Settings::values.custom_top_y = values[1];
+        Settings::values.custom_top_width = values[2];
+        Settings::values.custom_top_height = values[3];
+        Settings::values.custom_bottom_x = values[4];
+        Settings::values.custom_bottom_y = values[5];
+        Settings::values.custom_bottom_width = values[6];
+        Settings::values.custom_bottom_height = values[7];
+        
+        // Store buffer dimensions if provided (values 8 and 9)
+        if (values.size() >= 10) {
+            LibRetro::settings.custom_layout_buffer_width = values[8];
+            LibRetro::settings.custom_layout_buffer_height = values[9];
+            LOG_INFO(Frontend, "Custom layout configured - Top: {}x{} at ({},{}), Bottom: {}x{} at ({},{}), Buffer: {}x{}",
+                     values[2], values[3], values[0], values[1],
+                     values[6], values[7], values[4], values[5],
+                     values[8], values[9]);
+        } else {
+            LibRetro::settings.custom_layout_buffer_width = 0;
+            LibRetro::settings.custom_layout_buffer_height = 0;
+            LOG_INFO(Frontend, "Custom layout configured - Top: {}x{} at ({},{}), Bottom: {}x{} at ({},{})",
+                     values[2], values[3], values[0], values[1],
+                     values[6], values[7], values[4], values[5]);
+        }
+    } else {
+        LOG_WARNING(Frontend, "Invalid custom layout config, expected 8 or 10 values but got {}", values.size());
+    }
+}
+
 static void ParseLayoutOptions(void) {
-    Settings::values.layout_option =
+    // First try to get custom layout config (may be set via set_azahar_custom_layout)
+    auto custom_config = LibRetro::FetchVariable(config::layout::custom_layout_config, "");
+    
+    // If custom_config is provided via external API (set_azahar_custom_layout),
+    // automatically enable CustomLayout mode
+    if (!custom_config.empty()) {
+        Settings::values.layout_option = Settings::LayoutOption::CustomLayout;
+        ParseCustomLayoutConfig(custom_config);
+        LOG_INFO(Frontend, "Custom layout config: {}", custom_config);
+    } else {
+        // Otherwise, use the configured layout option
+        Settings::values.layout_option =
         GetLayoutOption(LibRetro::FetchVariable(config::layout::layout_option, "default"));
+    }
 
     Settings::values.swap_screen =
         LibRetro::FetchVariable(config::layout::swap_screen, "Top") == "Bottom";
@@ -982,7 +1084,7 @@ static void ParseStorageOptions(void) {
             if (!target_dir.ends_with("/"))
                 target_dir += "/";
 
-            target_dir += "Azahar/";
+            target_dir += "3DS/";
 
             // Ensure that this new dir exists
             if (!FileUtil::CreateDir(target_dir)) {
@@ -1055,6 +1157,14 @@ void ParseCoreOptions(void) {
     Settings::values.use_gles = false;
 #endif
     Settings::values.filter_mode = false;
+    
+    // Initialize camera settings to use blank camera
+    // LibRetro uses a simple blank camera that provides black frames
+    for (int i = 0; i < 3; ++i) {
+        Settings::values.camera_name[i] = "blank";
+        Settings::values.camera_config[i] = std::to_string(i);
+        Settings::values.camera_flip[i] = 0;
+    }
 
     ParseCpuOptions();
     ParseSystemOptions();

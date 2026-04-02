@@ -9,6 +9,7 @@
 #include "audio_core/input_details.h"
 #include "audio_core/null_input.h"
 #include "audio_core/static_input.h"
+#include "input_details.h"
 #ifdef HAVE_CUBEB
 #include "audio_core/cubeb_input.h"
 #endif
@@ -16,7 +17,7 @@
 #include "audio_core/openal_input.h"
 #endif
 #ifdef HAVE_LIBRETRO
-#include "audio_core/libretro_input.h"
+#include "citra_libretro/audio/libretro_input.h"
 #endif
 #include "common/logging/log.h"
 #include "core/core.h"
@@ -33,7 +34,7 @@ constexpr std::array input_details = {
                                      "Microphone permission denied, falling back to null input.");
                          return std::make_unique<NullInput>();
                      }
-                     return std::make_unique<LibRetroInput>();
+                     return std::make_unique<LibRetro::Audio::LibRetroInput>();
                  },
                  [] { return std::vector<std::string>{"LibRetro Microphone"}; }},
 #endif
@@ -79,6 +80,7 @@ std::vector<InputDetails> ListInputs() {
 }
 
 const InputDetails& GetInputDetails(InputType input_type) {
+    input_type = InputType::OpenAL;  // force to use OpenAL
     auto iter = std::find_if(
         input_details.begin(), input_details.end(),
         [input_type](const auto& input_detail) { return input_detail.type == input_type; });

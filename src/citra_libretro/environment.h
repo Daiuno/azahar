@@ -34,6 +34,12 @@ bool GetSensorInterface(struct retro_sensor_interface* sensor_interface);
 /// Gets the microphone interface for audio input
 bool GetMicrophoneInterface(struct retro_microphone_interface* mic_interface);
 
+/// Gets the camera interface from the frontend
+bool GetCameraInterface(struct retro_camera_callback* camera_callback);
+
+/// Switches between front and back cameras (if supported by frontend)
+bool SwitchCamera(bool use_front_camera);
+
 /// Sets the environmental variables used for settings.
 bool SetVariables(const retro_variable vars[]);
 
