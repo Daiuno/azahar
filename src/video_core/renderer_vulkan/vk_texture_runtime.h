@@ -178,6 +178,7 @@ public:
     explicit Surface(TextureRuntime& runtime, const VideoCore::SurfaceParams& params);
     explicit Surface(TextureRuntime& runtime, const VideoCore::SurfaceBase& surface,
                      const VideoCore::Material* materal);
+    ~Surface();
 
     Surface(const Surface&) = delete;
     Surface& operator=(const Surface&) = delete;

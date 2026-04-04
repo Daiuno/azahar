@@ -837,6 +837,14 @@ Surface::Surface(TextureRuntime& runtime_, const VideoCore::SurfaceBase& surface
     material = mat;
 }
 
+Surface::~Surface() {
+    // Ensure the scheduler's worker thread has finished recording all pending commands
+    // that may reference this surface's VkImage handles before they are destroyed.
+    // Without this, the worker thread could attempt to record a copy/blit command
+    // using a stale VkImage handle, causing a use-after-free crash in MoltenVK.
+    scheduler.WaitWorker();
+}
+
 void Surface::Upload(const VideoCore::BufferTextureCopy& upload,
                      const VideoCore::StagingData& staging) {
     runtime.renderpass_cache.EndRendering();
