@@ -31,6 +31,8 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL
         MACOSX_FRAMEWORK_IDENTIFIER com.azahar.libretro
         MACOSX_FRAMEWORK_BUNDLE_VERSION "1.0.0"
         MACOSX_FRAMEWORK_SHORT_VERSION_STRING "1.0.0"
+        XCODE_ATTRIBUTE_SKIP_INSTALL "YES"
+        XCODE_ATTRIBUTE_GCC_OPTIMIZATION_LEVEL "s"
 )
 CMAKE
 
@@ -51,6 +53,15 @@ cmake \
     -DCMAKE_PROJECT_INCLUDE="${INJECT_CMAKE}" \
     -S "$SCRIPT_DIR" \
     -B "$BUILD_DIR"
+
+# ── Step 4: Post-process — set defaultConfigurationName to Release ──────────
+# CMake sets defaultConfigurationName = Debug, which causes sub-project builds
+# to fall back to Debug when the parent uses a custom configuration name
+# (e.g. SideloadRelease, DevRelease). Changing this to Release ensures the
+# fallback uses optimized settings.
+echo "==> Patching defaultConfigurationName to Release..."
+sed -i '' 's/defaultConfigurationName = Debug/defaultConfigurationName = Release/g' \
+    "$BUILD_DIR"/azahar.xcodeproj/project.pbxproj
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
