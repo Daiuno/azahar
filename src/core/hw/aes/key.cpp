@@ -302,24 +302,36 @@ void LoadPresetKeys() {
 
 } // namespace
 
-std::istringstream GetKeysStream() {
-    const std::string filepath = FileUtil::GetUserPath(FileUtil::UserPath::SysDataDir) + KEYS_FILE;
-    FileUtil::CreateFullPath(filepath); // Create path if not already created
+static bool force_default_keys = false;
 
-    boost::iostreams::stream<boost::iostreams::file_descriptor_source> file;
-    FileUtil::OpenFStream<std::ios_base::in>(file, filepath);
-    std::istringstream ret;
-    if (file.is_open()) {
-        return std::istringstream(std::string(std::istreambuf_iterator<char>(file), {}));
-    } else {
-        // The key data is encrypted in the source to prevent easy access to it for unintended
-        // purposes.
-        std::vector<u8> kiv(16);
-        std::string s(default_keys_enc_size, ' ');
-        CryptoPP::CBC_Mode<CryptoPP::AES>::Decryption(kiv.data(), kiv.size(), kiv.data())
-            .ProcessData(reinterpret_cast<u8*>(s.data()), default_keys_enc, s.size());
-        return std::istringstream(s);
+void SetForceDefaultKeys(bool force) {
+    force_default_keys = force;
+}
+
+bool GetForceDefaultKeys() {
+    return force_default_keys;
+}
+
+std::istringstream GetKeysStream() {
+    if (!force_default_keys) {
+        const std::string filepath =
+            FileUtil::GetUserPath(FileUtil::UserPath::SysDataDir) + KEYS_FILE;
+        FileUtil::CreateFullPath(filepath);
+
+        boost::iostreams::stream<boost::iostreams::file_descriptor_source> file;
+        FileUtil::OpenFStream<std::ios_base::in>(file, filepath);
+        if (file.is_open()) {
+            return std::istringstream(
+                std::string(std::istreambuf_iterator<char>(file), {}));
+        }
     }
+
+    // Use embedded default keys
+    std::vector<u8> kiv(16);
+    std::string s(default_keys_enc_size, ' ');
+    CryptoPP::CBC_Mode<CryptoPP::AES>::Decryption(kiv.data(), kiv.size(), kiv.data())
+        .ProcessData(reinterpret_cast<u8*>(s.data()), default_keys_enc, s.size());
+    return std::istringstream(s);
 }
 
 void InitKeys(bool force) {

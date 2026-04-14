@@ -3,15 +3,18 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <vector>
 #include <boost/serialization/shared_ptr.hpp>
 #include "common/alignment.h"
 #include "common/archives.h"
+#include "common/logging/log.h"
 #include "common/memory_ref.h"
 #include "core/core.h"
 #include "core/hle/ipc.h"
 #include "core/hle/kernel/handle_table.h"
 #include "core/hle/kernel/ipc.h"
 #include "core/hle/kernel/ipc_debugger/recorder.h"
+#include "core/hle/kernel/errors.h"
 #include "core/hle/kernel/kernel.h"
 #include "core/hle/kernel/memory.h"
 #include "core/hle/kernel/process.h"
@@ -31,6 +34,11 @@ Result TranslateCommandBuffer(Kernel::KernelSystem& kernel, Memory::MemorySystem
     auto dst_process = dst_thread->owner_process.lock();
     ASSERT(src_process && dst_process);
 
+    // Do NOT clear mapped_buffer_context here on new requests: doing so drops live mappings
+    // without UnmapRange, leaks VM state, and can leave the next ReplyAndReceive unable to match
+    // buffers (freeze / spurious errors). Stale entries should be rare if each request is paired
+    // with a reply; if they appear, fix the session/reply ordering rather than clearing blindly.
+
     IPC::Header header;
     // TODO(Subv): Replace by Memory::Read32 when possible.
     memory.ReadBlock(*src_process, src_address, &header.raw, sizeof(header.raw));
@@ -38,10 +46,25 @@ Result TranslateCommandBuffer(Kernel::KernelSystem& kernel, Memory::MemorySystem
     std::size_t untranslated_size = 1u + header.normal_params_size;
     std::size_t command_size = untranslated_size + header.translate_params_size;
 
-    // Note: The real kernel does not check that the command length fits into the IPC buffer area.
-    ASSERT(command_size <= IPC::COMMAND_BUFFER_LENGTH);
+    // Header fields allow up to 127 words; TLS still stores command + static descriptors in one
+    // contiguous region (command may extend past 0x100 bytes into the static-buffer slots). Using
+    // a fixed 64-word buffer mis-decodes translate descriptors and breaks LLE IPC.
+    constexpr std::size_t MaxIpcCommandWords = 128;
+    if (command_size > MaxIpcCommandWords) {
+        LOG_ERROR(Kernel, "IPC command size ({}) is invalid (max {})", command_size,
+                  MaxIpcCommandWords);
+        return Result(ErrCodes::CommandTooLarge, ErrorModule::OS, ErrorSummary::InvalidState,
+                      ErrorLevel::Status);
+    }
 
-    std::array<u32, IPC::COMMAND_BUFFER_LENGTH> cmd_buf;
+    if (command_size > IPC::COMMAND_BUFFER_LENGTH) {
+        LOG_DEBUG(Kernel,
+                  "IPC command size ({}) exceeds 0x100-byte command buffer ({} words); "
+                  "reading full translate region (real TLS layout)",
+                  command_size, IPC::COMMAND_BUFFER_LENGTH);
+    }
+
+    std::vector<u32> cmd_buf(command_size);
     memory.ReadBlock(*src_process, src_address, cmd_buf.data(), command_size * sizeof(u32));
 
     const bool should_record = kernel.GetIPCRecorder().IsEnabled();
@@ -104,9 +127,6 @@ Result TranslateCommandBuffer(Kernel::KernelSystem& kernel, Memory::MemorySystem
             IPC::StaticBufferDescInfo bufferInfo{descriptor};
             VAddr static_buffer_src_address = cmd_buf[i];
 
-            std::vector<u8> data(bufferInfo.size);
-            memory.ReadBlock(*src_process, static_buffer_src_address, data.data(), data.size());
-
             // Grab the address that the target thread set up to receive the response static buffer
             // and write our data there. The static buffers area is located right after the command
             // buffer area.
@@ -124,12 +144,22 @@ Result TranslateCommandBuffer(Kernel::KernelSystem& kernel, Memory::MemorySystem
             memory.ReadBlock(*dst_process, dst_address + static_buffer_offset, &target_buffer,
                              sizeof(target_buffer));
 
-            // Note: The real kernel doesn't seem to have any error recovery mechanisms for this
-            // case.
-            ASSERT_MSG(target_buffer.descriptor.size >= data.size(),
-                       "Static buffer data is too big");
+            const u32 src_bytes = bufferInfo.size;
+            const u32 dst_bytes = target_buffer.descriptor.size;
+            const u32 transfer_bytes = std::min(src_bytes, dst_bytes);
 
-            memory.WriteBlock(*dst_process, target_buffer.address, data.data(), data.size());
+            if (src_bytes > dst_bytes) {
+                LOG_WARNING(Kernel,
+                            "Static buffer IPC truncated: src_size={} dst_size={} buffer_id={} "
+                            "(sender payload larger than receiver slot; clamping)",
+                            src_bytes, dst_bytes, static_cast<u32>(bufferInfo.buffer_id));
+            }
+
+            std::vector<u8> data(transfer_bytes);
+            if (transfer_bytes > 0) {
+                memory.ReadBlock(*src_process, static_buffer_src_address, data.data(), data.size());
+                memory.WriteBlock(*dst_process, target_buffer.address, data.data(), data.size());
+            }
 
             cmd_buf[i++] = target_buffer.address;
             break;
@@ -163,15 +193,40 @@ Result TranslateCommandBuffer(Kernel::KernelSystem& kernel, Memory::MemorySystem
                         return context.permissions == permissions && context.size == size &&
                                context.target_address == source_address;
                     });
+                if (found == mapped_buffer_context.end()) {
+                    // LLE services sometimes reply with a slightly different size/perm mask than
+                    // the original request used when registering the buffer; match by IPC address.
+                    found = std::find_if(
+                        mapped_buffer_context.begin(), mapped_buffer_context.end(),
+                        [source_address](const MappedBufferContext& context) {
+                            return context.target_address == source_address;
+                        });
+                    if (found != mapped_buffer_context.end()) {
+                        LOG_WARNING(Kernel,
+                                    "MappedBuffer reply relaxed match @ {:#010x}: "
+                                    "ctx size={} perm={} vs desc size={} perm={}",
+                                    source_address, found->size,
+                                    static_cast<u32>(found->permissions), size,
+                                    static_cast<u32>(permissions));
+                    }
+                }
+                if (found == mapped_buffer_context.end()) {
+                    LOG_ERROR(Kernel,
+                              "MappedBuffer reply: no context for addr={:#010x} perm={} size={} "
+                              "(remaining contexts={})",
+                              source_address, static_cast<u32>(permissions), size,
+                              mapped_buffer_context.size());
+                    return ResultInvalidBufferDescriptor;
+                }
 
-                ASSERT(found != mapped_buffer_context.end());
+                const u32 copy_size = std::min(size, found->size);
 
                 if (permissions != IPC::MappedBufferPermissions::R) {
                     // Copy the modified buffer back into the target process
                     // NOTE: As this is a reply the "source" is the destination and the
                     //       "target" is the source.
                     memory.CopyBlock(*dst_process, *src_process, found->source_address,
-                                     found->target_address, size);
+                                     found->target_address, copy_size);
                 }
 
                 VAddr prev_reserve = page_start - Memory::CITRA_PAGE_SIZE;

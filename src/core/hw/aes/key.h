@@ -82,6 +82,9 @@ using AESIV = std::array<u8, AES_BLOCK_SIZE>;
 
 std::istringstream GetKeysStream();
 
+void SetForceDefaultKeys(bool force);
+bool GetForceDefaultKeys();
+
 void InitKeys(bool force = false);
 
 void SetKeyX(std::size_t slot_id, const AESKey& key);

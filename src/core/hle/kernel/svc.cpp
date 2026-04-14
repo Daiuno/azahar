@@ -1017,9 +1017,13 @@ Result SVC::ReplyAndReceive(s32* index, VAddr handles_address, s32 handle_count,
             kernel, memory, SharedFrom(thread), request_thread, source_address, target_address,
             session->mapped_buffer_context, true);
 
-        // Note: The real kernel seems to always panic if the Server->Client buffer translation
-        // fails for whatever reason.
-        ASSERT(translation_result.IsSuccess());
+        // Hardware would fault here on failure; surface the error to the waiting client instead of
+        // aborting the process.
+        if (translation_result.IsError()) {
+            LOG_ERROR(Kernel, "Reply TranslateCommandBuffer failed: raw={:08X}",
+                      translation_result.raw);
+            request_thread->SetWaitSynchronizationResult(translation_result);
+        }
 
         // Note: The scheduler is not invoked here.
         request_thread->ResumeFromWait();

@@ -508,24 +508,46 @@ ResultStatus Apploader_Artic::Load(std::shared_ptr<Kernel::Process>& process) {
         }
 
         HW::UniqueData::InvalidateSecureData();
-        if (!HW::UniqueData::GetCTCert().IsValid() || !HW::UniqueData::GetMovableSed().IsValid() ||
-            !HW::UniqueData::GetSecureInfoA().IsValid() ||
-            !HW::UniqueData::GetLocalFriendCodeSeedB().IsValid()) {
-            client->LogOnServer(Network::ArticBaseCommon::LogOnServerType::LOG_ERROR,
-                                "Some console unique data is invalid.\n    Aborting...");
-            return ResultStatus::ErrorArtic;
+        {
+            bool ct_valid = HW::UniqueData::GetCTCert().IsValid();
+            bool mov_valid = HW::UniqueData::GetMovableSed().IsValid();
+            bool sec_valid = HW::UniqueData::GetSecureInfoA().IsValid();
+            bool lfcs_valid = HW::UniqueData::GetLocalFriendCodeSeedB().IsValid();
+            LOG_ERROR(Loader, "Artic setup validation: CTCert={} MovableSed={} SecureInfoA={} LFCS={}",
+                      ct_valid, mov_valid, sec_valid, lfcs_valid);
+            if (!ct_valid || !mov_valid || !sec_valid || !lfcs_valid) {
+                std::string detail = fmt::format(
+                    "Some console unique data is invalid.\n"
+                    "    CTCert={} Movable={} SecureInfo={} LFCS={}",
+                    ct_valid, mov_valid, sec_valid, lfcs_valid);
+                client->LogOnServer(Network::ArticBaseCommon::LogOnServerType::LOG_ERROR,
+                                    detail);
+                return ResultStatus::ErrorArtic;
+            }
         }
 
         if (cfg.get()) {
             auto cfg_module = cfg->GetModule();
+            // During initial setup, auto-fix country code to match the console region.
+            // The libretro frontend does not expose a country code setting, so the default
+            // config savegame always has country_code=49 (US), which is invalid for non-USA
+            // regions. Set a sensible default for each region.
             if (!Service::CFG::Module::IsValidRegionCountry(cfg_module->GetRegionValue(true),
                                                             cfg_module->GetCountryCode())) {
-                // Report mismatch to server.
-                client->LogOnServer(
-                    Network::ArticBaseCommon::LogOnServerType::LOG_ERROR,
-                    "The country configuration does not match\n    the console region. "
-                    "Please select a valid\n    country from the emulation settings.");
-                return ResultStatus::ErrorArtic;
+                u8 fixed_country = 49; // Default: US
+                switch (cfg_module->GetRegionValue(true)) {
+                case 0: fixed_country = 1; break;   // JPN -> Japan
+                case 1: fixed_country = 49; break;  // USA -> United States
+                case 2: fixed_country = 110; break;  // EUR -> United Kingdom
+                case 3: fixed_country = 65; break;  // AUS -> Australia
+                case 4: fixed_country = 160; break; // CHN -> China
+                case 5: fixed_country = 136; break; // KOR -> South Korea
+                case 6: fixed_country = 128; break; // TWN -> Taiwan
+                }
+                LOG_INFO(Loader, "Artic setup: auto-fixing country code from {} to {} for region {}",
+                         cfg_module->GetCountryCode(), fixed_country, cfg_module->GetRegionValue(true));
+                cfg_module->SetCountryCode(fixed_country);
+                cfg_module->UpdateConfigNANDSavegame();
             }
             cfg_module->SetSystemSetupNeeded(false);
         }

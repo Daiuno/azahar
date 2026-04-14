@@ -10,6 +10,7 @@
 #include "common/file_util.h"
 #include "common/settings.h"
 #include "core/hle/service/cfg/cfg.h"
+#include "core/hw/aes/key.h"
 
 namespace BaseKeys = Settings::HKeys;
 
@@ -46,6 +47,8 @@ namespace system {
 static constexpr const char* is_new_3ds = citra_setting(BaseKeys::is_new_3ds);
 static constexpr const char* region_value = citra_setting(BaseKeys::region_value);
 static constexpr const char* language_value = citra_setting(BaseKeys::language_value);
+static constexpr const char* use_default_aes_key = citra_setting(BaseKeys::use_default_aes_key);
+static constexpr const char* required_online_lle_modules = citra_setting(BaseKeys::required_online_lle_modules);
 } // namespace system
 
 namespace audio {
@@ -239,6 +242,38 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
             { nullptr, nullptr }
         },
         "english"
+    },
+    {
+        config::system::use_default_aes_key,
+        "Use Default AES Keys",
+        "Default AES Keys",
+        "When enabled, always use the built-in default AES keys instead of loading "
+        "from aes_keys.txt. This is required for Artic Base initial setup to work "
+        "correctly. Disable only if you have a complete custom aes_keys.txt.",
+        nullptr,
+        config::category::system,
+        {
+            { "enabled", "Enabled" },
+            { "disabled", "Disabled" },
+            { nullptr, nullptr }
+        },
+        "disabled"
+    },
+    {
+        config::system::required_online_lle_modules,
+        "Enable online-required LLE modules",
+        "Online LLE modules",
+        "When enabled, loads retail LLE system modules (BOSS, ACT, NIM, etc.) needed for "
+        "SpotPass/eShop-style features when the modules are installed in NAND. Matches Qt "
+        "\"Enable required online LLE modules\". Restart or reload may be required.",
+        nullptr,
+        config::category::system,
+        {
+            { "enabled", "Enabled" },
+            { "disabled", "Disabled" },
+            { nullptr, nullptr }
+        },
+        "disabled"
     },
 
     // Audio Category
@@ -857,6 +892,15 @@ static void ParseSystemOptions(void) {
 
     LibRetro::settings.language_value =
         GetLanguageValue(LibRetro::FetchVariable(config::system::language_value, "English"));
+
+    bool use_default =
+        LibRetro::FetchVariable(config::system::use_default_aes_key, "disabled") == "enabled";
+    if (use_default != HW::AES::GetForceDefaultKeys()) {
+        HW::AES::SetForceDefaultKeys(use_default);
+        HW::AES::InitKeys(true);
+    }
+    
+    Settings::values.enable_required_online_lle_modules = LibRetro::FetchVariable(config::system::required_online_lle_modules, "disabled") == "enabled";
 }
 
 static Settings::AudioEmulation GetAudioEmulation(const std::string& name) {
@@ -1084,7 +1128,10 @@ static void ParseStorageOptions(void) {
             if (!target_dir.ends_with("/"))
                 target_dir += "/";
 
-            target_dir += "3DS/";
+            // Only append "3DS/" if the path doesn't already end with it
+            // (the frontend may have already set a 3DS-specific save directory)
+            if (!target_dir.ends_with("3DS/") && !target_dir.ends_with("3ds/"))
+                target_dir += "3DS/";
 
             // Ensure that this new dir exists
             if (!FileUtil::CreateDir(target_dir)) {

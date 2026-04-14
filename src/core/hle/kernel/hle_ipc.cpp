@@ -11,6 +11,7 @@
 #include "common/archives.h"
 #include "common/assert.h"
 #include "common/common_types.h"
+#include "common/logging/log.h"
 #include "core/core.h"
 #include "core/hle/kernel/event.h"
 #include "core/hle/kernel/handle_table.h"
@@ -289,9 +290,19 @@ Result HLERequestContext::WriteToOutgoingCommandBuffer(u32_le* dst_cmdbuf,
             IPC::StaticBufferDescInfo target_descriptor{dst_cmdbuf[static_buffer_offset]};
             VAddr target_address = dst_cmdbuf[static_buffer_offset + 1];
 
-            ASSERT_MSG(target_descriptor.size >= data.size(), "Static buffer data is too big");
+            const u32 dst_bytes = target_descriptor.size;
+            const u32 src_bytes = static_cast<u32>(data.size());
+            const u32 transfer_bytes = std::min(src_bytes, dst_bytes);
 
-            kernel.memory.WriteBlock(dst_process, target_address, data.data(), data.size());
+            if (src_bytes > dst_bytes) {
+                LOG_WARNING(Kernel,
+                            "Static buffer reply truncated (HLE): src_size={} dst_size={} buffer_id={}",
+                            src_bytes, dst_bytes, static_cast<u32>(buffer_info.buffer_id));
+            }
+
+            if (transfer_bytes > 0) {
+                kernel.memory.WriteBlock(dst_process, target_address, data.data(), transfer_bytes);
+            }
 
             dst_cmdbuf[i++] = target_address;
             break;

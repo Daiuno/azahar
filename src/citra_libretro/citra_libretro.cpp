@@ -55,6 +55,7 @@
 #include "core/hle/kernel/process.h"
 #include "core/loader/loader.h"
 #include "core/memory.h"
+#include "core/hle/service/am/am.h"
 
 #ifdef HAVE_LIBRETRO_VFS
 #include <streams/file_stream_transforms.h>
@@ -323,6 +324,13 @@ void retro_run() {
 
     while (!emu_instance->emu_window->HasSubmittedFrame()) {
         auto result = Core::System::GetInstance().RunLoop();
+
+        if (result == Core::System::ResultStatus::ShutdownRequested) {
+            // Initial setup (Artic Base) completed — the 3DS requested a reboot,
+            // which is converted to shutdown when DoingInitialSetup() is true.
+            LibRetro::Shutdown();
+            return;
+        }
 
         if (result != Core::System::ResultStatus::Success) {
             std::string errorContent = Core::System::GetInstance().GetStatusDetails();
@@ -873,4 +881,8 @@ void retro_keyboard_input(const char* text, int button) {
         std::string text_str = text ? text : "";
         SoftwareKeyboard::AppleKeyboard::s_current_instance->SubmitInput(text_str, static_cast<u8>(button));
     }
+}
+
+void retro_install_cia(const char* path) {
+    Service::AM::InstallCIA(path, [](std::size_t total_bytes_read, std::size_t file_size) {});
 }

@@ -30,3 +30,4 @@ _retro_is_searching_amiibo
 _retro_remove_amiibo
 _retro_set_keyboard_callback
 _retro_keyboard_input
+_retro_install_cia
