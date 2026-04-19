@@ -247,6 +247,8 @@ endif()
 if (ENABLE_LIBRETRO)
     foreach(KEY IN ITEMS
         "language_value"
+        "use_default_aes_key"
+        "required_online_lle_modules"
         "swap_screen_mode"
         "custom_layout_config"
         "use_libretro_save_path"
