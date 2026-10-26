@@ -4,6 +4,7 @@
 
 #include <csignal>
 #include <cstring>
+#include <new>
 #include <dynarmic/interface/A32/a32.h>
 #include <dynarmic/interface/optimization_flags.h>
 #include "common/assert.h"
@@ -345,10 +346,36 @@ void ARM_Dynarmic::SetPageTable(const std::shared_ptr<Memory::PageTable>& page_t
         return;
     }
 
-    auto new_jit = MakeJit();
-    jit = new_jit.get();
-    LoadContext(ctx);
-    jits.emplace(current_page_table, std::move(new_jit));
+    // Each Jit owns a 16MiB CodeBlock from the process arena. Unbounded
+    // per-page-table caches fill the bump allocator (second session crash:
+    // CodeBlock throws std::bad_alloc → abort). Keep a small cache and
+    // drop the rest so slices return to the arena free list.
+    constexpr std::size_t kMaxJitsPerCore = 2;
+    while (jits.size() >= kMaxJitsPerCore) {
+        auto victim = jits.begin();
+        if (jit && victim->second.get() == jit) {
+            ++victim;
+        }
+        if (victim == jits.end()) {
+            break;
+        }
+        jits.erase(victim);
+    }
+
+    auto emplace_new = [this, &ctx]() {
+        auto new_jit = MakeJit();
+        jit = new_jit.get();
+        LoadContext(ctx);
+        jits.emplace(current_page_table, std::move(new_jit));
+    };
+
+    try {
+        emplace_new();
+    } catch (const std::bad_alloc&) {
+        jits.clear();
+        jit = nullptr;
+        emplace_new();
+    }
 }
 
 void ARM_Dynarmic::ServeBreak([[maybe_unused]] int signal) {
@@ -369,6 +396,8 @@ std::unique_ptr<Dynarmic::A32::Jit> ARM_Dynarmic::MakeJit() {
     // Multi-process state
     config.processor_id = GetID();
     config.global_monitor = &exclusive_monitor.monitor;
+    // Shared iOS JIT arena is 128MiB; keep each core cache modest so 4 cores + shaders fit.
+    config.code_cache_size = 16 * 1024 * 1024;
 
     return std::make_unique<Dynarmic::A32::Jit>(config);
 }

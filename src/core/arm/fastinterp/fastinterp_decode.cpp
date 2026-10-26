@@ -469,6 +469,9 @@ FlagEffects ClassifyFlagEffects(const DecodedInst& inst) {
     case Opcode::ThumbRevsh:
     case Opcode::ThumbBl:
     case Opcode::ThumbBlxImm:
+    case Opcode::ThumbBlPrefix:
+    case Opcode::ThumbBlSuffix:
+    case Opcode::ThumbBlxSuffix:
         return {0, 0, false};
 
     // Everything else (SVC, MRS/MSR, coprocessor, VFP, fused, unrolled, ...):
@@ -1299,6 +1302,31 @@ bool ARM_FastInterp::TryFuseThumb(DecodedInst& inst, u32 pc) {
     return false;
 }
 
+/// Decodes a BL/BLX half that does not form a prefix+suffix pair as a 16-bit
+/// instruction. The 3DS ARM11 (ARMv6K) has no Thumb-2: halfwords 0xE800-0xFFFF
+/// are always BL/BLX suffixes there, so nothing that runs on hardware decodes
+/// differently. Returns false for a real pair, which DecodeThumb32 handles.
+static bool DecodeThumbBlHalf(u16 hw1, u16 hw2, u32 pc, DecodedInst& out) {
+    const bool hw1_is_suffix = (hw1 & 0xE800) == 0xE800;
+    const bool hw2_is_suffix = (hw2 & 0xE800) == 0xE800;
+    if (!hw1_is_suffix && hw2_is_suffix) {
+        return false;
+    }
+
+    out.inst_size = 2;
+    out.cond = 0xE;
+    out.rd = 14;
+    if (hw1_is_suffix) {
+        out.opcode = (hw1 & 0x1000) ? Opcode::ThumbBlSuffix : Opcode::ThumbBlxSuffix;
+        out.imm32 = static_cast<u32>(hw1 & 0x7FF) << 1;
+    } else {
+        const s32 high = static_cast<s32>(static_cast<u32>(hw1 & 0x7FF) << 21) >> 9;
+        out.opcode = Opcode::ThumbBlPrefix;
+        out.imm32 = pc + 4 + static_cast<u32>(high);
+    }
+    return true;
+}
+
 void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     block->SetThumb(state_.thumb_mode);
     block->inst_count = 0; // Reset before decoding (critical for re-decode on mode change)
@@ -1339,8 +1367,11 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
 
         if (state_.thumb_mode) {
             u16 thumb_inst = ReadMemory16(current_pc);
-            // Check for 32-bit Thumb instruction
-            if ((thumb_inst & 0xE000) == 0xE000 && (thumb_inst & 0x1800) != 0) {
+            const bool is_wide = (thumb_inst & 0xE000) == 0xE000 && (thumb_inst & 0x1800) != 0;
+            if (is_wide &&
+                DecodeThumbBlHalf(thumb_inst, ReadMemory16(current_pc + 2), current_pc, inst)) {
+                current_pc += 2;
+            } else if (is_wide) {
                 u16 thumb_inst2 = ReadMemory16(current_pc + 2);
                 u32 full_inst = (static_cast<u32>(thumb_inst) << 16) | thumb_inst2;
                 DecodeThumb32(full_inst, current_pc, inst);
@@ -1400,6 +1431,8 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         case Opcode::ThumbBlxReg:
         case Opcode::ThumbBl:
         case Opcode::ThumbBlxImm:
+        case Opcode::ThumbBlSuffix:
+        case Opcode::ThumbBlxSuffix:
         case Opcode::ThumbSwi:
             // (fused opcodes never reach this switch: the TryFuse* paths exit
             // the decode loop directly)

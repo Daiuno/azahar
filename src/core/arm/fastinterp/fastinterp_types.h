@@ -362,6 +362,12 @@ enum class Opcode : u16 {
     ThumbBl,     // BL label (Thumb32)
     ThumbBlxImm, // BLX label (Thumb32)
 
+    // ARMv6 BL/BLX halves executed on their own (16-bit each). System titles
+    // run a prefix and suffix separately or call through LR with a bare suffix.
+    ThumbBlPrefix,  // LR = PC + 4 + (imm11 << 12)
+    ThumbBlSuffix,  // PC = LR + (imm11 << 1), LR = return | 1
+    ThumbBlxSuffix, // as above, word-aligned target, switch to ARM
+
     // =========================================================================
     // Fused instruction opcodes
     // =========================================================================

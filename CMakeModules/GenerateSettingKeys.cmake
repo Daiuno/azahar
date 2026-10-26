@@ -290,7 +290,9 @@ endif()
 if (ENABLE_LIBRETRO)
     foreach(KEY IN ITEMS
         "language_value"
+        "required_online_lle_modules"
         "swap_screen_mode"
+        "custom_layout_config"
         "use_libretro_save_path"
         "analog_function"
         "analog_deadzone"

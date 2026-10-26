@@ -111,14 +111,24 @@ android-arm64-v8a:
       - $LIBNAME
 
 # iOS arm64
+# Official ios-cmake.yml uses RelWithDebInfo (-O2 -g). Azahar's build_ios.sh /
+# Xcode path is Release (-O3 on citra_core / dynarmic / video_core). Override
+# the template script so local CI matches that production configuration.
 libretro-build-ios-arm64:
   extends:
     - .libretro-ios-cmake-arm64
     - .core-defs
   variables:
-    CORE_ARGS: ${BASE_CORE_ARGS} -DCITRA_USE_PRECOMPILED_HEADERS=OFF -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DENABLE_OPT=OFF
-    IOS_MINVER: "14.0"
-    EXTRA_PATH: bin/RelWithDebInfo
+    CORE_ARGS: ${BASE_CORE_ARGS} -DCITRA_USE_PRECOMPILED_HEADERS=OFF -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DENABLE_OPT=OFF -DCMAKE_BUILD_TYPE=Release
+    IOS_MINVER: "15.0"
+    EXTRA_PATH: bin/Release
+  script:
+    - ${CMAKE} $CMAKE_COMMON_ARGS $CORE_ARGS "$CMAKE_SOURCE_ROOT" -B$BUILD_DIR
+    - ${CMAKE} --build $BUILD_DIR --target ${CORENAME}_libretro --config Release --verbose -- -j $NUMPROC
+    - mv $BUILD_DIR/$EXTRA_PATH/$LIBNAME $LIBNAME
+    - dsymutil $LIBNAME -o ${LIBNAME}.dSYM
+    - strip -S $LIBNAME
+    - zip -r ${LIBNAME}.dSYM.zip ${LIBNAME}.dSYM
 
 # tvOS arm64
 libretro-build-tvos-arm64:
@@ -126,9 +136,15 @@ libretro-build-tvos-arm64:
     - .libretro-tvos-cmake-arm64
     - .core-defs
   variables:
-    CORE_ARGS: ${BASE_CORE_ARGS} -DCITRA_USE_PRECOMPILED_HEADERS=OFF -DIOS=ON -DCMAKE_SYSTEM_NAME=tvOS -DCMAKE_OSX_SYSROOT=appletvos -DCMAKE_OSX_ARCHITECTURES=arm64 -DENABLE_OPT=OFF
-    MINVER: "14.0"
-    EXTRA_PATH: bin/RelWithDebInfo
+    CORE_ARGS: ${BASE_CORE_ARGS} -DCITRA_USE_PRECOMPILED_HEADERS=OFF -DIOS=ON -DCMAKE_SYSTEM_NAME=tvOS -DCMAKE_OSX_SYSROOT=appletvos -DCMAKE_OSX_ARCHITECTURES=arm64 -DENABLE_OPT=OFF -DCMAKE_BUILD_TYPE=Release
+    MINVER: "15.0"
+    EXTRA_PATH: bin/Release
+  script:
+    - ${CMAKE} $CMAKE_COMMON_ARGS $CORE_ARGS "$CMAKE_SOURCE_ROOT" -B$BUILD_DIR
+    - ${CMAKE} --build $BUILD_DIR --target ${CORENAME}_libretro --config Release --verbose -- -j $NUMPROC
+    - mv $BUILD_DIR/$EXTRA_PATH/$LIBNAME $LIBNAME
+    - dsymutil $LIBNAME -o ${LIBNAME}.dSYM
+    - strip -S $LIBNAME
+    - zip -r ${LIBNAME}.dSYM.zip ${LIBNAME}.dSYM
 
 ################################### CONSOLES #################################
-

@@ -21,7 +21,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/externals/cmake-modul
 include(DownloadExternals)
 include(CMakeDependentOption)
 
-project(citra LANGUAGES C CXX ASM)
+project(azahar LANGUAGES C CXX ASM)
 # must be invoked after project() command when using CMAKE_TOOLCHAIN_FILE
 include(FindPkgConfig)
 if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -53,8 +53,8 @@ if (APPLE AND NOT ENABLE_LIBRETRO)
     set(CMAKE_CXX_ARCHIVE_FINISH "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
 
     if (IOS)
-        # Minimum iOS 14
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+        # Minimum iOS 15
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0")
 
         # Enable searching CMAKE_PREFIX_PATH for bundled dependencies.
         set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)

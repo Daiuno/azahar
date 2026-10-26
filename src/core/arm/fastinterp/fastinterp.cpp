@@ -475,6 +475,9 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         // Thumb32 handlers
         HANDLER(ThumbBl),
         HANDLER(ThumbBlxImm),
+        HANDLER(ThumbBlPrefix),
+        HANDLER(ThumbBlSuffix),
+        HANDLER(ThumbBlxSuffix),
 
         // Fused instruction handlers
         HANDLER(FusedSubsBcc),

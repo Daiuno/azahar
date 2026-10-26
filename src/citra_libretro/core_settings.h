@@ -33,6 +33,14 @@ struct CoreSettings {
 
     float motion_sensitivity;
 
+    /// Display rotation for iOS motion mapping.
+    /// 0=portrait, 1=landscapeLeft, 2=portraitUpsideDown, 3=landscapeRight.
+    int motion_rotation = 3;
+
+    // Custom layout buffer dimensions (0 means auto-calculate)
+    unsigned custom_layout_buffer_width = 0;
+    unsigned custom_layout_buffer_height = 0;
+
 } extern settings;
 
 void RegisterCoreOptions(void);

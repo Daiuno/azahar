@@ -11,6 +11,7 @@
 #include "common/vector_math.h"
 #include "core/frontend/input.h"
 
+#include "citra_libretro/core_settings.h"
 #include "citra_libretro/environment.h"
 #include "citra_libretro/input/input_factory.h"
 
@@ -102,6 +103,40 @@ static retro_set_sensor_state_t sensor_set_state_callback = nullptr;
 static bool gyro_enabled = false;
 static bool accel_enabled = false;
 
+// iOS CoreMotion is hardware-portrait: X right, Y earpiece, Z toward user.
+// 3DS: X+ screen-left, Y+ toward user, Z+ screen-up.
+static Common::Vec3<float> TransformMotionAxes(float in_x, float in_y, float in_z) {
+    Common::Vec3<float> out;
+    out.y = in_z;
+    switch (LibRetro::settings.motion_rotation) {
+    case 1: // landscapeLeft: home left, screen-up is -X
+        out.x = -in_y;
+        out.z = -in_x;
+        break;
+    case 2: // portrait upside down
+        out.x = in_x;
+        out.z = -in_y;
+        break;
+    case 3: // landscapeRight: home right, screen-up is +X
+        out.x = in_y;
+        out.z = in_x;
+        break;
+    default: // portrait
+        out.x = -in_x;
+        out.z = in_y;
+        break;
+    }
+    return out;
+}
+
+/// Treat a ~40° recline (comfortable viewing) as 3DS rest: gravity (0, 0, -1).
+static Common::Vec3<float> ApplyComfortPitch(Common::Vec3<float> v) {
+    constexpr float kRad = 40.0f * 3.14159265f / 180.0f;
+    const float c = std::cos(kRad);
+    const float s = std::sin(kRad);
+    return {v.x, v.y * c - v.z * s, v.y * s + v.z * c};
+}
+
 /// LibRetro motion device that implements 3DS gyroscope and accelerometer input
 class LibRetroMotion final : public ::Input::MotionDevice {
 public:
@@ -116,26 +151,27 @@ public:
 
         if (sensor_get_input_callback) {
             if (accel_enabled) {
-                // Get accelerometer data (in g units)
-                // LibRetro coordinate system matches 3DS: X=LEFT, Y=OUT, Z=UP
-                accel.x =
-                    sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_X) * sensitivity;
-                accel.y =
-                    sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_Y) * sensitivity;
-                accel.z =
-                    sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_Z) * sensitivity;
+                float ios_x = sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_X);
+                float ios_y = sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_Y);
+                float ios_z = sensor_get_input_callback(port, RETRO_SENSOR_ACCELEROMETER_Z);
+                auto transformed =
+                    ApplyComfortPitch(TransformMotionAxes(ios_x, ios_y, ios_z));
+                accel.x = transformed.x * sensitivity;
+                accel.y = transformed.y * sensitivity;
+                accel.z = transformed.z * sensitivity;
             }
 
             if (gyro_enabled) {
-                // Get gyroscope data (convert to degrees/sec)
-                // LibRetro gives radians/sec, 3DS expects degrees/sec
+                // iOS CoreMotion is rad/s; 3DS HID expects deg/s.
                 constexpr float RAD_TO_DEG = 180.0f / 3.14159265f;
-                gyro.x = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_X) * RAD_TO_DEG *
-                         sensitivity;
-                gyro.y = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_Y) * RAD_TO_DEG *
-                         sensitivity;
-                gyro.z = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_Z) * RAD_TO_DEG *
-                         sensitivity;
+                float ios_x = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_X);
+                float ios_y = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_Y);
+                float ios_z = sensor_get_input_callback(port, RETRO_SENSOR_GYROSCOPE_Z);
+                auto transformed =
+                    ApplyComfortPitch(TransformMotionAxes(ios_x, ios_y, ios_z));
+                gyro.x = transformed.x * RAD_TO_DEG * sensitivity;
+                gyro.y = transformed.y * RAD_TO_DEG * sensitivity;
+                gyro.z = transformed.z * RAD_TO_DEG * sensitivity;
             }
         }
 

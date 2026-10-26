@@ -1053,8 +1053,8 @@ void JitShader::Compile(const std::array<u32, MAX_PROGRAM_CODE_LENGTH>* program_
     program = reinterpret_cast<CompiledShader*>(reinterpret_cast<std::byte*>(code_mem->ptr()) +
                                                 program_offset);
 
-    // Copy to executable memory
-    std::memcpy(code_mem->ptr(), code_vec.data(), code_vec.size() * sizeof(u32));
+    // Write through the RW mirror on iOS 26+ dual mapping; ptr() is RX-only there.
+    std::memcpy(code_mem->wptr(), code_vec.data(), code_vec.size() * sizeof(u32));
 
     // Memory is ready to execute
     code_mem->protect();

@@ -3,10 +3,13 @@
 // Refer to the misc/licenses/gplv2.txt file included.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <vector>
 #include "audio_core/libretro_input.h"
 #include "citra_libretro/environment.h"
@@ -19,6 +22,25 @@ namespace AudioCore {
 namespace {
 // Global instance pointer for access from retro_run
 LibRetroInput* g_libretro_input = nullptr;
+
+using Clock = std::chrono::steady_clock;
+
+// read_mic blocks until the requested count is queued, and RetroArch's CoreAudio FIFO
+// (64 ms by default, ~3072 samples at 48 kHz) has no overflow guard. Reads therefore track
+// wall-clock production while leaving this many samples queued: enough to cover one hardware
+// callback (~1024 frames on iOS) so reads never wait, and far enough below the FIFO size that
+// a slow frame does not overflow it.
+constexpr s64 kFrontendBacklog = 1536;
+// Discarded on (re)start so stale or overflowed FIFO contents never reach the game.
+constexpr std::size_t kResyncDrain = 1536;
+constexpr std::size_t kMaxReadPerPoll = 4096;
+// A longer gap between polls (pause, state load) means the FIFO may have overflowed.
+constexpr auto kResyncGap = std::chrono::milliseconds(100);
+// A read_mic call slower than this had to wait for the hardware.
+constexpr auto kBlockedRead = std::chrono::milliseconds(2);
+
+// The MIC service calls Read() once per 15 samples of emulated time (GetBufferUpdatePeriod).
+constexpr std::size_t kSamplesPerUpdate = 15;
 } // namespace
 
 struct LibRetroInput::Impl {
@@ -26,7 +48,6 @@ struct LibRetroInput::Impl {
     retro_microphone_t* mic_handle = nullptr;
     bool is_sampling = false;
     u8 sample_size_in_bytes = 2;
-    int warmup_frames = 0;
 
     // The rate at which the frontend actually provides samples (may differ from
     // what the 3DS mic service requested). We open the mic at this rate to avoid
@@ -34,13 +55,39 @@ struct LibRetroInput::Impl {
     // downsampling (ratio < 1). We resample ourselves in Read() instead.
     u32 native_sample_rate = 0;
 
-    // Ring buffer for thread-safe sample storage
-    // Capacity: 4096 samples should be plenty for buffering between frames
-    // The 3DS mic service reads 16 samples at a time at ~32728 Hz
-    Common::RingBuffer<s16, 4096> sample_buffer;
+    // Raw device-rate samples handed from PollMicrophone() to Read().
+    Common::RingBuffer<s16, 8192> sample_buffer;
 
     // Temporary buffer for reading from frontend
     std::vector<s16> read_buffer;
+
+    // Wall-clock pacing of frontend reads (see kFrontendBacklog).
+    bool needs_resync = true;
+    Clock::time_point read_anchor{};
+    Clock::time_point last_poll{};
+    s64 total_read = 0;
+
+    // Streaming linear resampler state, carried across Read() calls so chunk boundaries
+    // stay continuous and no fractional samples are lost.
+    std::array<s16, 8192> raw_scratch{};
+    s16 resample_last = 0;
+    double resample_pos = 0.0;
+
+    // Game-rate samples waiting to be handed to the MIC service.
+    std::vector<s16> pending;
+    std::size_t pending_offset = 0;
+
+    void ResetStream() {
+        needs_resync = true;
+        total_read = 0;
+        resample_last = 0;
+        resample_pos = 0.0;
+        pending.clear();
+        pending.reserve(8192);
+        pending_offset = 0;
+        while (sample_buffer.Pop(raw_scratch.data(), raw_scratch.size()) > 0) {
+        }
+    }
 
     Impl() {
         // Try to get the microphone interface from the frontend
@@ -61,15 +108,7 @@ struct LibRetroInput::Impl {
             LOG_WARNING(Audio, "LibRetro microphone interface not available");
         }
 
-        // Keep this small enough that RetroArch's microphone_driver_read can
-        // fill its outgoing FIFO in a single flush iteration. The CoreAudio
-        // driver's internal FIFO is ~480 samples (10ms at 48kHz). If we
-        // request more than that, the blocking while-loop in
-        // microphone_driver_read must wait for the next hardware callback,
-        // and on ARM64 without memory barriers in the FIFO, it may never
-        // see the new data. 128 samples is conservative enough to succeed
-        // in one pass.
-        read_buffer.resize(128);
+        read_buffer.resize(std::max(kMaxReadPerPoll, kResyncDrain));
     }
 
     ~Impl() {
@@ -172,11 +211,8 @@ void LibRetroInput::StartSampling(const InputParameters& params) {
         return;
     }
 
+    impl->ResetStream();
     impl->is_sampling = true;
-    // Give the audio hardware a few frames to start delivering data before
-    // we attempt a (blocking) read_mic call. Without this, the very first
-    // read can hang because the CoreAudio callback hasn't fired yet.
-    impl->warmup_frames = 10;
     LOG_INFO(Audio, "LibRetro microphone sampling started at {} Hz, {} bit", params.sample_rate,
              params.sample_size);
 }
@@ -216,25 +252,49 @@ void LibRetroInput::PollMicrophone() {
         return;
     }
 
-    // Wait for the audio hardware to start delivering data before making
-    // any blocking read_mic calls.
-    if (impl->warmup_frames > 0) {
-        impl->warmup_frames--;
-        return;
-    }
-
     // Issue a memory fence before reading. RetroArch's CoreAudio mic driver
     // fills its FIFO from a callback thread without memory barriers. On ARM64
     // (weak memory model), the main thread may not see the callback's writes
     // without an explicit barrier.
     std::atomic_thread_fence(std::memory_order_acquire);
 
-    int samples_read = impl->mic_interface->read_mic(impl->mic_handle, impl->read_buffer.data(),
-                                                     static_cast<size_t>(impl->read_buffer.size()));
+    const auto now = Clock::now();
+    if (impl->needs_resync || now - impl->last_poll > kResyncGap) {
+        // One-time wait of at most ~32 ms when sampling starts or resumes.
+        impl->mic_interface->read_mic(impl->mic_handle, impl->read_buffer.data(), kResyncDrain);
+        impl->read_anchor = Clock::now();
+        impl->last_poll = impl->read_anchor;
+        // Leave the next kFrontendBacklog samples queued as the safety margin.
+        impl->total_read = kFrontendBacklog;
+        impl->needs_resync = false;
+        return;
+    }
+    impl->last_poll = now;
+
+    // Read exactly what the device has produced since the anchor, minus the backlog.
+    const double elapsed = std::chrono::duration<double>(now - impl->read_anchor).count();
+    const s64 produced = static_cast<s64>(elapsed * impl->native_sample_rate);
+    const s64 wanted = produced - impl->total_read;
+    if (wanted <= 0) {
+        return;
+    }
+    const auto to_read = static_cast<std::size_t>(
+        std::min<s64>(wanted, static_cast<s64>(kMaxReadPerPoll)));
+
+    const auto read_start = Clock::now();
+    const int samples_read =
+        impl->mic_interface->read_mic(impl->mic_handle, impl->read_buffer.data(), to_read);
+    const auto read_time = Clock::now() - read_start;
 
     if (samples_read > 0) {
+        impl->total_read += samples_read;
         impl->sample_buffer.Push(
             std::span<const s16>(impl->read_buffer.data(), static_cast<size_t>(samples_read)));
+    }
+    if (read_time > kBlockedRead) {
+        // The hardware delivered later than the wall clock predicted; shift the anchor so the
+        // following reads keep a full backlog instead of waiting again.
+        impl->read_anchor += read_time;
     }
 }
 
@@ -246,34 +306,46 @@ Samples LibRetroInput::Read() {
         return {};
     }
 
-    // Pop available samples from the buffer (at native device rate)
-    std::vector<s16> raw_samples = impl->sample_buffer.Pop();
+    auto& pending = impl->pending;
 
-    if (raw_samples.empty()) {
+    // Resample newly polled device-rate samples to the game rate.
+    const std::size_t raw_count =
+        impl->sample_buffer.Pop(impl->raw_scratch.data(), impl->raw_scratch.size());
+    if (raw_count > 0) {
+        const s16* raw = impl->raw_scratch.data();
+        if (impl->native_sample_rate == 0 || impl->native_sample_rate == parameters.sample_rate) {
+            pending.insert(pending.end(), raw, raw + raw_count);
+        } else {
+            // Position is in input samples; index 0 is the last sample of the previous chunk.
+            const double step =
+                static_cast<double>(impl->native_sample_rate) / parameters.sample_rate;
+            double pos = impl->resample_pos;
+            while (pos < static_cast<double>(raw_count)) {
+                const auto idx = static_cast<std::size_t>(pos);
+                const double frac = pos - static_cast<double>(idx);
+                const s16 s0 = idx == 0 ? impl->resample_last : raw[idx - 1];
+                const s16 s1 = raw[idx];
+                pending.push_back(static_cast<s16>(s0 + (s1 - s0) * frac));
+                pos += step;
+            }
+            impl->resample_pos = pos - static_cast<double>(raw_count);
+            impl->resample_last = raw[raw_count - 1];
+        }
+    }
+
+    // Hand samples over at the rate the real MIC hardware fills its buffer. Catch up if the
+    // queue grows past ~2 frames (e.g. emulation below full speed) instead of adding latency.
+    const std::size_t available = pending.size() - impl->pending_offset;
+    if (available == 0) {
         return {};
     }
-
-    // Resample from native device rate to the rate the 3DS mic service expects
-    if (impl->native_sample_rate != 0 && impl->native_sample_rate != parameters.sample_rate) {
-        double ratio = static_cast<double>(parameters.sample_rate) / impl->native_sample_rate;
-        auto output_count = static_cast<std::size_t>(raw_samples.size() * ratio);
-        if (output_count == 0) {
-            return {};
-        }
-        std::vector<s16> resampled(output_count);
-        for (std::size_t i = 0; i < output_count; i++) {
-            double src_pos = i / ratio;
-            auto idx = static_cast<std::size_t>(src_pos);
-            double frac = src_pos - idx;
-            if (idx + 1 < raw_samples.size()) {
-                resampled[i] =
-                    static_cast<s16>(raw_samples[idx] * (1.0 - frac) + raw_samples[idx + 1] * frac);
-            } else {
-                resampled[i] = raw_samples[std::min(idx, raw_samples.size() - 1)];
-            }
-        }
-        raw_samples = std::move(resampled);
+    const std::size_t high_water = parameters.sample_rate / 30;
+    std::size_t count = std::min(available, kSamplesPerUpdate);
+    if (available > high_water) {
+        count = available - high_water + kSamplesPerUpdate;
     }
+
+    const std::span<const s16> raw_samples(pending.data() + impl->pending_offset, count);
 
     // Convert sample format if needed
     constexpr auto convert_s16_to_u16 = [](s16 sample) -> u16 {
@@ -315,6 +387,17 @@ Samples LibRetroInput::Read() {
             const u8* data = reinterpret_cast<const u8*>(raw_samples.data());
             output.insert(output.end(), data, data + raw_samples.size() * 2);
         }
+    }
+
+    // raw_samples points into pending, so only advance the queue after conversion.
+    impl->pending_offset += count;
+    if (impl->pending_offset == pending.size()) {
+        pending.clear();
+        impl->pending_offset = 0;
+    } else if (impl->pending_offset > 4096) {
+        pending.erase(pending.begin(),
+                      pending.begin() + static_cast<std::ptrdiff_t>(impl->pending_offset));
+        impl->pending_offset = 0;
     }
 
     return output;

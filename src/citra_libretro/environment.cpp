@@ -62,6 +62,17 @@ bool GetMicrophoneInterface(struct retro_microphone_interface* mic_interface) {
     return environ_cb(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, mic_interface);
 }
 
+bool GetCameraInterface(struct retro_camera_callback* camera_callback) {
+    return environ_cb(RETRO_ENVIRONMENT_GET_CAMERA_INTERFACE, camera_callback);
+}
+
+bool SwitchCamera(bool use_front_camera) {
+    // Custom environment call to switch camera device
+    // RETRO_ENVIRONMENT_SET_CAMERA_DEVICE = 80 | RETRO_ENVIRONMENT_EXPERIMENTAL
+    const unsigned RETRO_ENVIRONMENT_SET_CAMERA_DEVICE = (80 | 0x10000);
+    return environ_cb(RETRO_ENVIRONMENT_SET_CAMERA_DEVICE, &use_front_camera);
+}
+
 Settings::GraphicsAPI GetPreferredRenderer() {
     // On Android, we really want to default to Vulkan if we can, so we'll ignore the frontend's
     // recommendation if possible...
@@ -167,9 +178,13 @@ bool Shutdown() {
 
 /// Displays the specified message to the screen.
 bool DisplayMessage(const char* sg) {
+    return DisplayMessageFor(sg, 60 * 10);
+}
+
+bool DisplayMessageFor(const char* sg, int frames) {
     retro_message msg;
     msg.msg = sg;
-    msg.frames = 60 * 10;
+    msg.frames = frames;
     return environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &msg);
 }
 

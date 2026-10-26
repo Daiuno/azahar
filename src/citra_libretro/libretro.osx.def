@@ -25,3 +25,10 @@ _retro_unload_game
 _retro_get_region
 _retro_get_memory_data
 _retro_get_memory_size
+_retro_azahar_extension_version
+_retro_azahar_load_amiibo
+_retro_azahar_is_searching_amiibo
+_retro_azahar_remove_amiibo
+_retro_azahar_set_keyboard_callback
+_retro_azahar_keyboard_input
+_retro_azahar_install_cia

@@ -667,7 +667,11 @@ struct Values {
     Setting<std::string> network_token{"", Keys::network_token};
 
     // Miscellaneous
+#ifdef HAVE_LIBRETRO
+    Setting<std::string> log_filter{"*:Warning", Keys::log_filter};
+#else
     Setting<std::string> log_filter{"*:Info", Keys::log_filter};
+#endif
     Setting<std::string> log_regex_filter{"", Keys::log_regex_filter};
 
     // Video Dumping

@@ -9,6 +9,12 @@ add_library(citra_libretro_common OBJECT
         input/input_factory.h
         input/mouse_tracker.cpp
         input/mouse_tracker.h
+        camera/libretro_camera.cpp
+        camera/libretro_camera.h
+        camera/libretro_camera_factory.cpp
+        camera/libretro_camera_factory.h
+        applets/swkbd_apple.cpp
+        applets/swkbd_apple.h
         $<$<BOOL:${ENABLE_VULKAN}>: libretro_vk.cpp libretro_vk.h>
         environment.cpp
         environment.h
@@ -27,6 +33,7 @@ endif()
 add_library(citra_libretro SHARED
         citra_libretro.cpp
         citra_libretro.h
+        libretro_azahar.h
         $<TARGET_OBJECTS:citra_libretro_common>)
 
 set_target_properties(citra_libretro PROPERTIES OUTPUT_NAME "azahar_libretro")
@@ -87,7 +94,11 @@ endif()
 if(IOS)
   target_compile_definitions(citra_libretro_common PRIVATE IOS)
   target_compile_definitions(citra_libretro PRIVATE IOS)
-  target_link_libraries(citra_libretro PRIVATE "-framework CoreFoundation" "-framework Foundation")
+  target_link_libraries(citra_libretro PRIVATE "-framework CoreFoundation" "-framework Foundation" "-framework IOKit")
+endif()
+
+if (SSE42_COMPILE_OPTION)
+  target_compile_definitions(citra_libretro PRIVATE CITRA_HAS_SSE42)
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
